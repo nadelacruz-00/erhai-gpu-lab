@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Regenerate candidates/<candidate>/*.patch from BASE_SHA..<branch> of a kernel
 # checkout, so CI builds exactly what the branch holds. Records the tip in STACK.
+# A candidate without cmdline/extra.config gets 60-gpu-reference's.
 set -euo pipefail
 
 usage() { echo "usage: $0 <kernel-dir> <branch> <candidate> [--prefix N]" >&2; exit 64; }
@@ -37,7 +38,17 @@ if [ -n "$PREFIX" ]; then
 fi
 
 OUT="$ROOT/candidates/$CAND"
+# A new prefix/A-B dir builds with the reference candidate's cmdline and
+# extra.config unless it has its own.
+REF="$ROOT/candidates/60-gpu-reference"
+for f in cmdline extra.config; do
+    [ -f "$OUT/$f" ] || [ -f "$REF/$f" ] \
+        || { echo "$CAND has no $f and $REF/$f does not exist to copy" >&2; exit 2; }
+done
 mkdir -p "$OUT"
+for f in cmdline extra.config; do
+    [ -f "$OUT/$f" ] || cp "$REF/$f" "$OUT/$f"
+done
 # Stage next to the destination (same filesystem), then swap in, so a failure
 # leaves the existing patches and STACK intact.
 TMP=$(mktemp -d "$ROOT/candidates/.export.XXXXXX")

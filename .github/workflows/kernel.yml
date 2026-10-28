@@ -92,9 +92,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CAND: ${{ matrix.candidate }}
           KVER: ${{ steps.build.outputs.kver }}
+          PATCHES: ${{ steps.build.outputs.patches }}
         run: |
           tag="lab-$CAND-${{ github.run_number }}"
+          stack=$(cat "candidates/$CAND/STACK" 2>/dev/null || echo none)
           gh release create "$tag" out/"$CAND"/* \
             --title "$CAND #${{ github.run_number }} ($KVER)" \
-            --notes "Candidate \`$CAND\`, kernelrelease \`$KVER\`, base tree \`$(cat candidates/BASE_SHA)\`, lab commit \`${GITHUB_SHA}\`. Install with \`erhai-lab fetch $CAND\`; never with dpkg." \
+            --notes "Candidate \`$CAND\`, kernelrelease \`$KVER\`, base tree \`$(cat candidates/BASE_SHA)\`, lab commit \`${GITHUB_SHA}\`, stack \`$stack\` ($PATCHES patches). Install with \`erhai-lab fetch $CAND\`; never with dpkg." \
             --target "$GITHUB_SHA"

@@ -79,14 +79,15 @@ The candidate is an ordered stack of 13 commits, bottom to top:
 
 Commits 3 and 4 move together (the catalog's GEN1 entry and the DT reg sizes are one change; the OPP table needs the qfprom cell from the same patch). `extra.config` sets `CONFIG_SM_GPUCC_8750=y` for every prefix build, including `--prefix 2`.
 
-Export a prefix: `tools/export-patches.sh <kernel-dir> erhai-gpu-reference 60-gpu-reference --prefix N`. Order, each expected to boot:
+Every prefix build goes to its own candidate dir, so `60-gpu-reference` always holds the full stack: `tools/export-patches.sh <kernel-dir> erhai-gpu-reference 60-gpu-reference-pN --prefix N`. A new dir gets `60-gpu-reference`'s `cmdline` and `extra.config`; `STACK` records the exported tip and CI puts its first 12 hex digits on the UKI cmdline (`erhai_lab.stack=`) and in the release notes, so `erhai-gpu-lab whoami` shows which stack booted. Order, each expected to boot:
 
-- `--prefix 2`: providers + gxclkctl bound; the port's GPU/GMU nodes and catalog unchanged. Must boot and show the GX genpd attached.
-- `--prefix 6`: plus Qualcomm's GPU/GMU nodes and catalog, defconfig and `dev_warn`; the port's GMU hacks still present. Must boot the GPU.
-- `--prefix 12`: the candidate minus IFPC (7-10 reverts and the gate removal included).
-- `--prefix 11`: minus IFPC and cold boot.
-- `--prefix 10`: minus IFPC, cold boot and the gate/`rpmh_off` removal.
-- no `--prefix`: the full stack (13), the candidate.
+- `60-gpu-reference-p2` (`--prefix 2`): providers + gxclkctl bound; the port's GPU/GMU nodes and catalog unchanged. Must boot and show the GX genpd attached.
+- `60-gpu-reference-p6` (`--prefix 6`): plus Qualcomm's GPU/GMU nodes and catalog, defconfig and `dev_warn`; the port's GMU hacks still present. Must boot the GPU.
+- `60-gpu-reference-p12` (`--prefix 12`): the candidate minus IFPC (7-10 reverts and the gate removal included).
+- `60-gpu-reference-p11` (`--prefix 11`): minus IFPC and cold boot.
+- `60-gpu-reference-p10` (`--prefix 10`): minus IFPC, cold boot and the gate/`rpmh_off` removal.
+- `60-gpu-reference` (no `--prefix`): the full stack (13), the candidate.
+- A/B arm (clause 3c): `tools/export-patches.sh <kernel-dir> erhai-gpu-reference 60-gpu-reference-ifpc-off --prefix 12`.
 
 Reading the results:
 
@@ -94,7 +95,7 @@ Reading the results:
 - If prefix 2 boots and prefix 6 does not, the fault is in the reference GPU/GMU/catalog adoption; restore the port's nodes one node at a time (GMU node first, then catalog).
 - If prefix 6 boots and the full stack does not, drop from the top one prefix at a time: 12 (IFPC), then 11 (cold boot), then 10 (gate).
 - If g0 passes but g1 fails, re-apply only `e9faa3ec42` to confirm RSCC is the lever.
-- Unattributed resets: follow clause 3 (A/B with `60-gpu-reference-ifpc-off`, which equals `--prefix 12`).
+- Unattributed resets: follow clause 3 (A/B with `60-gpu-reference-ifpc-off`, which is `--prefix 12` in its own dir).
 
 ## Results
 

@@ -7,7 +7,7 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
   fetch <candidate>   download a CI-built lab kernel, verify SHA256SUMS and the
                       UKI/modules kernelrelease, install it beside the package
                       kernel (/boot/<kver>.efi + /usr/lib/modules/<kver>/)
-  whoami              print the booted kernel's lab candidate and build
+  whoami              print the booted kernel's lab candidate, build and stack
 
 Rungs, experiments and their numbers are described in docs/ladder.md.
 """
@@ -29,21 +29,24 @@ from pathlib import Path
 REPO = "nadelacruz-00/erhai-gpu-lab"
 BOOT_DIR = Path("/boot")
 MODULES_DIR = Path("/usr/lib/modules")
+PROC_CMDLINE = Path("/proc/cmdline")
 
 
 class LabError(Exception):
     """A refusal or failure with a reason the user should see verbatim."""
 
 
-def lab_identity(cmdline: str) -> tuple[str, str]:
-    """(candidate, build) from erhai_lab.* params on a lab UKI's cmdline."""
-    cand = build = ""
+def lab_identity(cmdline: str) -> tuple[str, str, str]:
+    """(candidate, build, stack) from erhai_lab.* params on a lab UKI's cmdline."""
+    cand = build = stack = ""
     for word in cmdline.split():
         if word.startswith("erhai_lab.candidate="):
             cand = word.split("=", 1)[1]
         elif word.startswith("erhai_lab.build="):
             build = word.split("=", 1)[1]
-    return cand, build
+        elif word.startswith("erhai_lab.stack="):
+            stack = word.split("=", 1)[1]
+    return cand, build, stack
 
 
 # ----------------------------------------------------------------- fetch ---
@@ -222,10 +225,11 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def cmd_whoami(args: argparse.Namespace) -> int:
-    cand, build = lab_identity(Path("/proc/cmdline").read_text())
+    cand, build, stack = lab_identity(PROC_CMDLINE.read_text())
     kver = os.uname().release
     if cand:
-        print(f"{kver}: lab candidate {cand}, build {build or '?'}")
+        print(f"{kver}: lab candidate {cand}, build {build or '?'}"
+              + (f", stack={stack}" if stack else ""))
     else:
         print(f"{kver}: package kernel (not a lab build)")
     return 0

@@ -33,6 +33,10 @@ def make_repo(tmp: Path):
     (lab / "candidates").mkdir(parents=True)
     (lab / "tools").mkdir()
     (lab / "candidates" / "BASE_SHA").write_text(base + "\n")
+    ref = lab / "candidates" / "60-gpu-reference"
+    ref.mkdir()
+    (ref / "cmdline").write_text("console=tty0\n")
+    (ref / "extra.config").write_text("CONFIG_SM_GPUCC_8750=y\n")
     shutil.copy(SCRIPT, lab / "tools" / "export-patches.sh")
     git(kernel, "checkout", "-q", "-b", "work")
     for name in "abc":
@@ -79,6 +83,27 @@ class ExportPatches(unittest.TestCase):
         self.assertEqual(len(list(self.cand.glob("*.patch"))), 2)
         self.assertEqual((self.cand / "STACK").read_text().strip(),
                          git(self.kernel, "rev-parse", "work~1"))
+
+    def test_new_candidate_gets_reference_cmdline_and_config(self):
+        r = self.run_export("work", "--prefix", "2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.cand / "cmdline").read_text(), "console=tty0\n")
+        self.assertEqual((self.cand / "extra.config").read_text(), "CONFIG_SM_GPUCC_8750=y\n")
+
+    def test_existing_cmdline_and_config_are_kept(self):
+        self.cand.mkdir()
+        (self.cand / "cmdline").write_text("own\n")
+        (self.cand / "extra.config").write_text("CONFIG_OWN=y\n")
+        self.assertEqual(self.run_export("work").returncode, 0)
+        self.assertEqual((self.cand / "cmdline").read_text(), "own\n")
+        self.assertEqual((self.cand / "extra.config").read_text(), "CONFIG_OWN=y\n")
+
+    def test_missing_files_without_reference_dir_fails(self):
+        shutil.rmtree(self.lab / "candidates" / "60-gpu-reference")
+        r = self.run_export("work")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("60-gpu-reference", r.stderr)
+        self.assertFalse(list(self.cand.glob("*.patch")) if self.cand.exists() else [])
 
     def test_branch_not_on_base_fails(self):
         r = self.run_export("orphan")

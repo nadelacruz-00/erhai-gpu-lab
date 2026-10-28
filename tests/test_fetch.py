@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """fetch: SHA256SUMS and asset verification."""
 
+import contextlib
 import hashlib
+import io
 import json
 import tempfile
 import unittest
@@ -154,6 +156,32 @@ class LatestTag(unittest.TestCase):
 class RepoIdentity(unittest.TestCase):
     def test_repo_is_the_gpu_lab(self):
         self.assertEqual(lab.REPO, "nadelacruz-00/erhai-gpu-lab")
+
+
+class Whoami(unittest.TestCase):
+    def whoami(self, cmdline: str) -> str:
+        with tempfile.NamedTemporaryFile("w", suffix="cmdline") as f:
+            f.write(cmdline)
+            f.flush()
+            old, lab.PROC_CMDLINE = lab.PROC_CMDLINE, Path(f.name)
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(lab.cmd_whoami(None), 0)
+            finally:
+                lab.PROC_CMDLINE = old
+        return out.getvalue()
+
+    def test_prints_stack_when_present(self):
+        out = self.whoami("root=x erhai_lab.candidate=60-gpu-reference-p6 "
+                          "erhai_lab.build=12 erhai_lab.stack=0123456789ab\n")
+        self.assertIn("lab candidate 60-gpu-reference-p6, build 12", out)
+        self.assertIn("stack=0123456789ab", out)
+
+    def test_no_stack_param_prints_no_stack(self):
+        out = self.whoami("root=x erhai_lab.candidate=60-gpu-reference erhai_lab.build=3\n")
+        self.assertIn("lab candidate 60-gpu-reference, build 3", out)
+        self.assertNotIn("stack=", out)
 
 
 if __name__ == "__main__":

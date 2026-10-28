@@ -34,6 +34,23 @@ JOBS=${JOBS:-$(nproc)}
 
 [ -d "$CDIR" ] || { echo "no candidate dir $CDIR" >&2; exit 1; }
 [ -f "$CDIR/cmdline" ] || { echo "candidate $CAND has no cmdline" >&2; exit 1; }
+shopt -s nullglob
+PATCHES=("$CDIR"/*.patch)
+shopt -u nullglob
+if [ -f "$CDIR/STACK" ] && [ ${#PATCHES[@]} -eq 0 ]; then
+	echo "candidate $CAND: STACK present but no patches" >&2
+	exit 1
+fi
+
+CMDLINE="$(tr -s '[:space:]' ' ' < "$CDIR/cmdline" | sed 's/^ //; s/ $//') erhai_lab.candidate=$CAND erhai_lab.build=$BUILD_ID"
+if [ -f "$CDIR/STACK" ]; then
+	CMDLINE="$CMDLINE erhai_lab.stack=$(head -c12 "$CDIR/STACK")"
+fi
+# Test seam: validate the candidate and print the UKI cmdline, build nothing.
+if [ "${PRINT_CMDLINE:-}" = 1 ]; then
+	echo "$CMDLINE"
+	exit 0
+fi
 
 # ------------------------------------------------------------------ source ---
 if [ ! -d "$TREE/.git" ]; then
@@ -48,9 +65,7 @@ git -C "$TREE" checkout -q --force FETCH_HEAD
 # $TREE/kernel-build-files/extra.config; stage the candidate's into both.
 rm -rf "$TREE/patches" "$TREE/kernel-build-files"
 mkdir -p "$TREE/patches" "$TREE/kernel-build-files"
-shopt -s nullglob
-for p in "$CDIR"/*.patch; do cp "$p" "$TREE/patches/"; done
-shopt -u nullglob
+for p in "${PATCHES[@]}"; do cp "$p" "$TREE/patches/"; done
 if [ -f "$CDIR/extra.config" ]; then
 	cp "$CDIR/extra.config" "$TREE/kernel-build-files/extra.config"
 fi
@@ -98,7 +113,6 @@ tar -C "$STAGE/lib/modules" --owner=0 --group=0 -c "$KVER" |
 
 cp "$TREE/.config" "$OUT/config-$KVER"
 
-CMDLINE="$(tr -s '[:space:]' ' ' < "$CDIR/cmdline" | sed 's/ $//') erhai_lab.candidate=$CAND erhai_lab.build=$BUILD_ID"
 ukify build \
 	--linux "$TREE/arch/arm64/boot/Image" \
 	--devicetree "$TREE/arch/arm64/boot/dts/qcom/erhai.dtb" \
@@ -114,4 +128,5 @@ cat "$OUT/SHA256SUMS"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
 	echo "kver=$KVER" >> "$GITHUB_OUTPUT"
+	echo "patches=${#PATCHES[@]}" >> "$GITHUB_OUTPUT"
 fi
