@@ -143,6 +143,14 @@ class ReportSoakTest(unittest.TestCase):
             json.dumps({"start_line": 1, "start_boot": B}))
         self.assertIn("boots: 1", lab.render_report(self.state, {}))
 
+    def test_report_soak_honours_stop_line(self):
+        (self.state / "soak.json").write_text(
+            json.dumps({"start_line": 1, "start_boot": A, "stop_line": 1}))
+        out = lab.render_report(self.state, {B: "GMU OOB timed out\n"})
+        self.assertIn("boots: 1", out)
+        self.assertNotIn("reset bbbbbbbb", out)
+        self.assertNotIn("wedge bbbbbbbb", out)
+
     def test_report_corrupt_soak_json_is_reported(self):
         (self.state / "soak.json").write_text("{not json")
         self.assertIn("cannot read", lab.render_report(self.state, {}))
@@ -178,6 +186,12 @@ class CmdReportTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         j.assert_any_call("-k", "-b", A)
         self.assertIn("wedge aaaaaaaa GMU OOB timed out", out)
+
+    def test_report_as_root_reads_only_the_soak_window(self):
+        (self.state / "soak.json").write_text(
+            json.dumps({"start_line": 1, "start_boot": A, "stop_line": 1}))
+        _, _, _, j = self.run_cmd(["report"], 0)
+        self.assertEqual(j.call_args_list, [mock.call("-k", "-b", A)])
 
     def test_report_out_file(self):
         dest = self.state / "report.md"

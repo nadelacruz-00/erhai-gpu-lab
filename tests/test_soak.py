@@ -87,6 +87,14 @@ class SoakSummaryTest(unittest.TestCase):
         self.assertEqual(s["resets"], [])
         self.assertEqual(s["boots"], 2)
 
+    def test_stop_line_closes_the_window(self):
+        boots = [boot(A), boot(B, "warm"), boot(C, "cold"), boot(D, "unknown", unlogged="11111111")]
+        self.assertEqual(lab.soak_boot_ids(boots, 1, A, 2), [A, B])
+        s = lab.soak_summary(window(A, 7), boots, 1, {C: "GMU OOB\n"}, A, 2)
+        self.assertEqual(s["boots"], 2)
+        self.assertEqual(s["resets"], [(B, "warm")])
+        self.assertEqual(s["wedge_lines"], [])
+
     def test_soak_summary_collects_wedge_lines(self):
         klog = ("msm_dpu ae01000.display-controller: vblank timeout\n"
                 "msm_dpu ae01000.display-controller: hangcheck recover! now\n")
@@ -169,6 +177,18 @@ class TickTest(StateTest):
         self.assertFalse((self.state / "soak-cycles.log").exists())
 
 
+class TickAfterStopTest(StateTest):
+    def test_tick_after_stop_is_noop(self):
+        (self.state / "soak.json").write_text(
+            json.dumps({"start_boot": A, "start_line": 1, "stop_line": 2}))
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run") as run:
+            rc, _, _ = self.run_cmd("tick")
+        self.assertEqual(rc, 0)
+        run.assert_not_called()
+        self.assertFalse((self.state / "soak-cycles.log").exists())
+
+
 class StartStopStatusTest(StateTest):
     def test_start_records_boot_and_line_and_enables_timer(self):
         (self.state / "boots.log").write_text(
@@ -193,6 +213,42 @@ class StartStopStatusTest(StateTest):
         self.assertEqual(json.loads((self.state / "soak.json").read_text()),
                          {"start_boot": B, "start_line": 0})
 
+    def test_start_refuses_running_soak(self):
+        running = json.dumps({"start_boot": A, "start_line": 1}) + "\n"
+        (self.state / "soak.json").write_text(running)
+        (self.state / "soak-cycles.log").write_text(window(A, 5))
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run") as run:
+            rc, _, err = self.run_cmd("start")
+        self.assertEqual(rc, 2)
+        self.assertIn("soak already running; soak stop first", err)
+        run.assert_not_called()
+        self.assertEqual((self.state / "soak.json").read_text(), running)
+        self.assertEqual((self.state / "soak-cycles.log").read_text(), window(A, 5))
+
+    def test_start_after_stop_starts_a_new_soak(self):
+        (self.state / "boots.log").write_text(f"boot={A} prev=none pstore=0\n")
+        (self.state / "soak.json").write_text(
+            json.dumps({"start_boot": A, "start_line": 0, "stop_line": 1}))
+        (self.state / "soak-cycles.log").write_text(window(A, 5))
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0)):
+            rc, _, _ = self.run_cmd("start")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads((self.state / "soak.json").read_text()),
+                         {"start_boot": B, "start_line": 1})
+        self.assertEqual((self.state / "soak-cycles.log").read_text(), "")
+
+    def test_start_systemctl_failure_keeps_cycles_log(self):
+        (self.state / "soak-cycles.log").write_text(window(A, 5))
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 1)):
+            rc, _, _ = self.run_cmd("start")
+        self.assertEqual(rc, 2)
+        self.assertEqual((self.state / "soak-cycles.log").read_text(), window(A, 5))
+
     def test_start_systemctl_failure_removes_soak_json(self):
         with mock.patch.object(lab, "require_root"), \
              mock.patch.object(lab.subprocess, "run",
@@ -214,6 +270,53 @@ class StartStopStatusTest(StateTest):
             ["systemctl", "disable", "--now", "erhai-gpu-lab-soak.timer"])
         self.assertTrue((self.state / "soak.json").exists())
         self.assertTrue((self.state / "soak-cycles.log").exists())
+
+    def test_stop_records_stop_line(self):
+        (self.state / "boots.log").write_text(
+            f"boot={A} prev=none pstore=0\nboot={B} prev=clean pstore=0\n")
+        (self.state / "soak.json").write_text(json.dumps({"start_boot": A, "start_line": 1}))
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0)):
+            rc, _, _ = self.run_cmd("stop")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads((self.state / "soak.json").read_text()),
+                         {"start_boot": A, "start_line": 1, "stop_line": 2})
+        self.assertEqual([p.name for p in self.state.iterdir() if p.name.startswith(".")], [])
+
+    def test_stop_again_keeps_the_first_stop_line(self):
+        (self.state / "boots.log").write_text(
+            f"boot={A} prev=none pstore=0\nboot={B} prev=clean pstore=0\n")
+        (self.state / "soak.json").write_text(
+            json.dumps({"start_boot": A, "start_line": 1, "stop_line": 1}))
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0)):
+            self.run_cmd("stop")
+        self.assertEqual(json.loads((self.state / "soak.json").read_text())["stop_line"], 1)
+
+    def test_stop_without_soak_only_disables_timer(self):
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0)) as run:
+            rc, _, _ = self.run_cmd("stop")
+        self.assertEqual(rc, 0)
+        run.assert_called_once()
+        self.assertFalse((self.state / "soak.json").exists())
+
+    def test_status_after_stop_says_stopped_and_ignores_later_boots(self):
+        (self.state / "soak.json").write_text(
+            json.dumps({"start_boot": A, "start_line": 1, "stop_line": 1}))
+        (self.state / "boots.log").write_text(
+            f"boot={A} prev=none pstore=0\nboot={B} prev=cold pstore=0\n")
+        with mock.patch.object(lab, "_journal", return_value=None) as j:
+            rc, out, _ = self.run_cmd("status")
+        self.assertEqual(rc, 0)
+        lines = out.splitlines()
+        self.assertIn("soak: stopped", lines)
+        self.assertIn("boots: 1", lines)
+        self.assertNotIn("reset bbbbbbbb cold", lines)
+        self.assertEqual(j.call_args_list, [mock.call("-k", "-b", A)])
 
     def test_root_commands_refuse_without_root(self):
         with mock.patch.object(lab.os, "geteuid", return_value=1000), \
@@ -245,6 +348,7 @@ class StartStopStatusTest(StateTest):
         self.assertEqual(rc, 0)
         self.assertEqual(calls, [("-k", "-b", A), ("-k", "-b", B)])
         lines = out.splitlines()
+        self.assertIn("soak: running", lines)
         self.assertIn("hours: 1.67", lines)
         self.assertIn("cycles: 1100 (>= 1000: yes)", lines)
         self.assertIn("boots: 2", lines)

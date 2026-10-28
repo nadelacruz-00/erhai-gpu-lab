@@ -858,9 +858,10 @@ WEDGE_RE = re.compile(r"GMU OOB|HFI .*timed out|hangcheck recover!|a8xx_recover|
 _CYCLES_LINE_RE = re.compile(r"\bcycles=(\d+)")
 
 
-def soak_boot_ids(boots: list[dict], start_line: int, start_boot: str | None = None
-                  ) -> list[str]:
-    """Boot ids of a soak: the start boot plus every boots.log line after start_line.
+def soak_boot_ids(boots: list[dict], start_line: int, start_boot: str | None = None,
+                  stop_line: int | None = None) -> list[str]:
+    """Boot ids of a soak: the start boot plus the boots.log lines in
+    [start_line, stop_line) (to the end while the soak runs).
 
     `soak start` runs after boot-run logged its own boot, so without start_boot the
     start boot is the last line before start_line. Ids are deduplicated."""
@@ -869,7 +870,7 @@ def soak_boot_ids(boots: list[dict], start_line: int, start_boot: str | None = N
         start_boot = boots[start_line - 1].get("boot")
     if start_boot:
         ids.append(start_boot)
-    for rec in boots[start_line:]:
+    for rec in boots[start_line:stop_line]:
         bid = rec.get("boot")
         if bid and bid not in ids:
             ids.append(bid)
@@ -877,7 +878,8 @@ def soak_boot_ids(boots: list[dict], start_line: int, start_boot: str | None = N
 
 
 def soak_summary(cycles_log: str, boots: list[dict], start_line: int,
-                 kernel_logs: dict[str, str], start_boot: str | None = None) -> dict:
+                 kernel_logs: dict[str, str], start_boot: str | None = None,
+                 stop_line: int | None = None) -> dict:
     """Totals of a soak from its window log, boots.log and per-boot kernel logs.
 
     Only boot ids and line order are used, never timestamps (a cold reset restarts
@@ -894,10 +896,10 @@ def soak_summary(cycles_log: str, boots: list[dict], start_line: int,
             continue
         secs += s
         cycles += c
-    ids = soak_boot_ids(boots, start_line, start_boot)
+    ids = soak_boot_ids(boots, start_line, start_boot, stop_line)
     resets: list[tuple[str, str]] = []
     unlogged = 0
-    for rec in boots[start_line:]:
+    for rec in boots[start_line:stop_line]:
         if rec.get("boot") not in ids or rec.get("boot") == ids[0]:
             continue
         if rec.get("prev") in ("warm", "cold"):
@@ -922,6 +924,18 @@ def _read_soak(state: Path) -> dict | None:
         raise LabError(f"cannot read {state / SOAK_FILE}: {e}") from e
 
 
+def _write_json(path: Path, obj: dict) -> None:
+    """Replace path with obj as JSON atomically (a tmp file beside it)."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(obj) + "\n")
+    os.replace(tmp, path)
+
+
+def _soak_window(soak: dict) -> tuple[int, str | None, int | None]:
+    """(start_line, start_boot, stop_line) of soak.json; stop_line None while running."""
+    return soak.get("start_line", 0), soak.get("start_boot"), soak.get("stop_line")
+
+
 def _boots_records(state: Path) -> list[dict[str, str]]:
     try:
         return parse_boots((state / BOOTS_LOG).read_text())
@@ -937,20 +951,31 @@ def _systemctl(*args: str) -> None:
 def soak_start() -> int:
     require_root("soak start")
     state_file = STATE_DIR / SOAK_FILE
+    old = _read_soak(STATE_DIR)
+    if old is not None and _soak_window(old)[2] is None:
+        raise LabError("soak already running; soak stop first")
     start = {"start_boot": this_boot_id(),
              "start_line": len(_boots_records(STATE_DIR))}
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps(start) + "\n")
-        (STATE_DIR / SOAK_CYCLES_LOG).write_text("")
+        _write_json(state_file, start)
     except OSError as e:
         raise LabError(f"cannot write soak state in {STATE_DIR}: {e}") from e
     try:
         # state first: enabling --now fires the overdue OnBootSec timer at once
         _systemctl("enable", "--now", SOAK_TIMER)
     except LabError:
-        state_file.unlink(missing_ok=True)
+        if old is None:
+            state_file.unlink(missing_ok=True)
+        else:
+            _write_json(state_file, old)    # the stopped soak stays as it was
         raise
+    # the first window takes SOAK_WINDOW_S to finish, so nothing is appended yet
+    try:
+        (STATE_DIR / SOAK_CYCLES_LOG).write_text("")
+    except OSError as e:
+        raise LabError(f"cannot empty {STATE_DIR / SOAK_CYCLES_LOG}: {e}; "
+                       "the soak timer is already enabled") from e
     print(f"soak started on boot {start['start_boot'][:8]}; one {SOAK_WINDOW_S} s "
           f"window about every hour, goal {SOAK_TARGET_CYCLES} cycles "
           "(erhai-gpu-lab soak status)")
@@ -958,15 +983,31 @@ def soak_start() -> int:
 
 
 def soak_stop() -> int:
+    """Close the soak window at the current end of boots.log, then disable the timer.
+
+    The window closes first, so a failed disable still leaves tick a no-op.
+    A second stop keeps the first stop_line."""
     require_root("soak stop")
+    try:
+        soak = _read_soak(STATE_DIR)
+    except LabError as e:
+        print(f"erhai-lab: soak stop: {e}; window not closed", file=sys.stderr)
+        soak = None
+    if soak is not None and _soak_window(soak)[2] is None:
+        soak["stop_line"] = len(_boots_records(STATE_DIR))
+        try:
+            _write_json(STATE_DIR / SOAK_FILE, soak)
+        except OSError as e:
+            raise LabError(f"cannot write {STATE_DIR / SOAK_FILE}: {e}") from e
     _systemctl("disable", "--now", SOAK_TIMER)
-    print(f"soak timer disabled; results kept in {STATE_DIR}")
+    print(f"soak stopped and timer disabled; results kept in {STATE_DIR}")
     return 0
 
 
 def soak_tick() -> int:
     """One cycle-counting window, run by erhai-gpu-lab-soak.service."""
-    if _read_soak(STATE_DIR) is None:
+    soak = _read_soak(STATE_DIR)
+    if soak is None or _soak_window(soak)[2] is not None:
         return 0
     require_root("soak tick")
     res = subprocess.run([str(helper("gpu-checks.sh")), "cycles", str(SOAK_WINDOW_S)],
@@ -988,14 +1029,15 @@ def soak_status() -> int:
         print("no soak in progress (erhai-gpu-lab soak start)")
         return 0
     boots = _boots_records(STATE_DIR)
-    start_line, start_boot = soak.get("start_line", 0), soak.get("start_boot")
+    start_line, start_boot, stop_line = _soak_window(soak)
     kernel_logs = {bid: _journal("-k", "-b", bid) or ""
-                   for bid in soak_boot_ids(boots, start_line, start_boot)}
+                   for bid in soak_boot_ids(boots, start_line, start_boot, stop_line)}
     try:
         cycles_log = (STATE_DIR / SOAK_CYCLES_LOG).read_text()
     except OSError:
         cycles_log = ""
-    s = soak_summary(cycles_log, boots, start_line, kernel_logs, start_boot)
+    s = soak_summary(cycles_log, boots, start_line, kernel_logs, start_boot, stop_line)
+    print("soak: running" if stop_line is None else "soak: stopped")
     print(f"hours: {s['hours']:.2f}")
     print(f"cycles: {s['cycles']} (>= {SOAK_TARGET_CYCLES}: "
           f"{'yes' if s['cycles_ok'] else 'no'})")
@@ -1064,8 +1106,8 @@ def _report_soak(state: Path, boots: list[dict[str, str]],
     cycles_log = _read_text(state / SOAK_CYCLES_LOG)
     if cycles_log.startswith("unreadable: "):
         cycles_log = ""
-    s = soak_summary(cycles_log, boots, soak.get("start_line", 0), kernel_logs or {},
-                     soak.get("start_boot"))
+    start_line, start_boot, stop_line = _soak_window(soak)
+    s = soak_summary(cycles_log, boots, start_line, kernel_logs or {}, start_boot, stop_line)
     out = ["## Soak", "", "```", f"hours: {s['hours']:.2f}",
            f"cycles: {s['cycles']} (>= {SOAK_TARGET_CYCLES}: {'yes' if s['cycles_ok'] else 'no'})",
            f"boots: {s['boots']}"]
@@ -1129,8 +1171,7 @@ def cmd_report(args: argparse.Namespace) -> int:
             soak = _read_soak(STATE_DIR)
         except LabError:
             soak = None     # render_report shows the unreadable soak.json itself
-        ids = soak_boot_ids(_boots_records(STATE_DIR), soak.get("start_line", 0),
-                            soak.get("start_boot")) if soak else []
+        ids = soak_boot_ids(_boots_records(STATE_DIR), *_soak_window(soak)) if soak else []
         kernel_logs = {bid: _journal("-k", "-b", bid) or "" for bid in ids}
     text = render_report(STATE_DIR, kernel_logs)
     if args.out:
