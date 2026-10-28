@@ -146,7 +146,12 @@ check_no_gx_warn() {
 check_renderer() {
     local e
     if [ -n "${EGLINFO_FILE:-}" ]; then e=$(cat "$EGLINFO_FILE" 2>/dev/null); else e=$(eglinfo -B 2>/dev/null); fi
-    verdict renderer FD830 "no FD830 in eglinfo -B" grep -q FD830 <<<"$e"
+    # Mesa reports "Adreno (TM) 830" (older builds: "FD830"); any llvmpipe/softpipe renderer fails
+    if grep -qiE 'renderer: .*(llvmpipe|softpipe|swrast)' <<<"$e"; then
+        report FAIL renderer "software renderer in eglinfo -B"
+    else
+        verdict renderer "Adreno 830" "no Adreno 830 renderer in eglinfo -B" grep -qE 'renderer: .*(Adreno \(TM\) 830|FD830)' <<<"$e"
+    fi
 }
 check_zap() {
     dmesg_needed zap && return

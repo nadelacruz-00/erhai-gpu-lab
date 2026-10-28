@@ -1,0 +1,4 @@
+GBM platform:
+OpenGL ES profile renderer: Adreno (TM) 830
+Surfaceless platform:
+OpenGL ES profile renderer: llvmpipe (LLVM 20.1, 128 bits)

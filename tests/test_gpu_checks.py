@@ -156,6 +156,14 @@ class GpuChecks(unittest.TestCase):
             for cid in ["no-oops", "no-minus19", "no-gx-warn", "zap", "suspend-hang-gpu"]:
                 self.assertRegex(r.stdout, rf"(?m)^FAIL {cid} dmesg unavailable", msg=cid)
 
+    def test_renderer_accepts_mesa_adreno_tm_830(self):
+        r = run_checks("pass")
+        self.assertRegex(r.stdout, r"(?m)^PASS renderer Adreno 830")
+
+    def test_renderer_fails_when_any_platform_is_software(self):
+        r = run_checks("renderer-mixed")
+        self.assertRegex(r.stdout, r"(?m)^FAIL renderer software renderer")
+
     def test_cycles_missing_report_fails(self):
         r = run_cycles("/nonexistent/report")
         self.assertEqual(r.returncode, 1)

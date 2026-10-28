@@ -133,13 +133,33 @@ for o in $(seq $((0x40)) $((0x7f))); do printf '%02x %s\n' $o "$(dd if=$F bs=1 s
 
 Result: power key vs PMIC watchdog is not distinguishable from Linux; warm vs cold is (rtc-offset wiped, or `erhai-rtc-sync: system clock is 1970` in the next boot's journal). Evidence: `~/gpu-lab-evidence/sdam0-after-reboot-*.txt`, `sdam0-after-powerkey-*.txt`.
 
-### g0 control (package kernel; operator step, not run)
+### g0 control (package kernel `7.3.0-rc5-sm8750-themojoman-lab-43-pr-dual-pump`, 2026-10-28, `MODE=once`)
 
-Command: `sudo tablet/gpu-checks.sh g0 | tee g0-control.txt` on the package kernel with `MODE=once`. Paste below. Expect (1)-(5) PASS, `-19` present, `genpd:1` absent.
+Command: `sudo tablet/gpu-checks.sh g0 | tee g0-control.txt` on the package kernel with `MODE=once`. Paste below. Expect (1)-(5) PASS, `-19` present, `genpd:1` absent. `hung-task` and `dpm-watchdog` FAIL here by design (those detectors are lab-only `extra.config` options, absent from the package kernel).
 
 ```
-(pending)
+FAIL gxclkctl-bound driver=none
+FAIL gmu-genpd genpd:1 missing for 3d6a000.gmu
+FAIL gx-gdsc-summary gx_clkctl_gx_gdsc not in pm_genpd_summary
+PASS no-oops none
+INFO unrelated-warnings 13
+FAIL no-minus19 Couldn't power up the GPU
+PASS no-gx-warn none
+PASS renderer Adreno 830   # re-run after the renderer-check fix; first run said FAIL (checker looked for "FD830")
+PASS zap no pas_init_image error
+INFO fuse speed_bin absent (no qfprom nvmem)
+PASS pstore ramoops registered
+FAIL hung-task hung_task_timeout_secs missing
+FAIL dpm-watchdog CONFIG_DPM_WATCHDOG not =y
+INFO pon-reason not-readable
+PASS suspend-hang-gpu none
+PASS probe renderD128=msm_dpu gpu=adreno
+PASS pin-released released
+PASS shell-on-gpu freedreno-or-libgallium
+PASS runtime-suspends suspended
 ```
+
+Verdict: as expected. Contract (1)-(5) PASS (`probe`, `zap`, `renderer`, `pin-released`, `shell-on-gpu`); the bug is visible (`gxclkctl-bound` driver=none, `gmu-genpd` genpd:1 missing for 3d6a000.gmu, `gx-gdsc-summary` absent, `-19` at GPU load); `runtime-suspends` PASS with the pin released.
 
 ### g0 candidate
 
@@ -170,7 +190,7 @@ cat $B/energy_now; date +%s     # end
 | Rung | Kernel | Date | Result | Notes |
 |---|---|---|---|---|
 | g-1 | | | | |
-| g0 control | | | | |
+| g0 control | lab-43 (package) | 2026-10-28 | as expected | renderer check fixed to accept `Adreno (TM) 830` |
 | g0 | | | | |
 | g1 control | | | | |
 | g1 recover (5x + MODE=always 1x) | | | | |

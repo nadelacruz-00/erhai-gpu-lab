@@ -1,1 +1,4 @@
-EGL: OpenGL ES profile renderer: Mesa Adreno (FD830)
+GBM platform:
+EGL vendor string: Mesa Project
+OpenGL ES profile vendor: freedreno
+OpenGL ES profile renderer: Adreno (TM) 830
