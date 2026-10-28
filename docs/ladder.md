@@ -228,7 +228,7 @@ Side finding: a local gcc-15 build (the package kernel b37) boots, so local buil
 
 `sudo erhai-gpu-lab g1`: `gpu-fault` 5/5 **PASS** (IGT SUCCESS 6.9-7.9 s each, exactly one `hangcheck recover!`, no `cx gdsc didn't collapse`, no hw_init error, desktop kept running). `hangcheck` **FAIL**, reproduced twice: IGT `scratch[1+i] == 2+i` fails with `0 != 10` (submit #8 never ran) and `recover=2`. With the error IRQ off, the sw hangcheck fired after about 5 s and blamed fence 13743 (the oldest incomplete one, IGT submit #8; the bad packet is in #10), so recovery dropped an innocent submit. A second lockup was caught after IGT exited.
 
-Control: the package kernel (`7.3.0-rc5-sm8750-themojoman`, b37, the old GPU stack) fails `hangcheck` identically (`0 != 10`, recover=2, 00:25). So this is a pre-existing a8xx sw-hangcheck blame/replay quirk, not something this candidate introduced. It is logged as other lane (an upstream drm/msm question), and g1 is judged on `gpu-fault`. Still open in g1: one `gpu-fault` run with `MODE=always` (`g1 --pinned`).
+Control: the package kernel (`7.3.0-rc5-sm8750-themojoman`, b37, the old GPU stack) fails `hangcheck` identically (`0 != 10`, recover=2, 00:25). So this is a pre-existing a8xx sw-hangcheck blame/replay quirk, not something this candidate introduced. It is logged as other lane (an upstream drm/msm question), and g1 is judged on `gpu-fault`. Pinned run (`MODE=always`, `control=on`), first attempt on the 12-commit stack: froze. Every recovery logged `a8xx_recover: cx gdsc didn't collapse`, the same hang came back every 5 s (4 loops), then gnome-shell was blamed and a CP translation fault followed (`~/gpu-lab-evidence`, boot 78bdf0c9). Cause: a8xx_recover() resets the GPU by letting it runtime-suspend, and `power/control=on` forbids that. This is upstream drm/msm behaviour, so the `MODE=always` rollback has never survived a GPU hang. Fix: new commit 13 `drm/msm/a8xx: recover even when runtime PM is forbidden` (allow rpm for the reset, restore the forbid after). Rerun on the 13-commit stack (`60-gpu-reference`, local build, 00:47): **PASS** (IGT SUCCESS 6.6 s, one `hangcheck recover!`, no `cx gdsc didn't collapse`, `power/control` back to `on` afterwards).
 
 ### Idle-power baseline (operator step, not run)
 
@@ -255,7 +255,7 @@ for i in $(seq 180); do echo "$(date +%s) $(cat $B/voltage_now) $(cat $B/current
 | g0 control | lab-43 (package) | 2026-10-28 | as expected | renderer check fixed to accept `Adreno (TM) 830` |
 | g0 | 60-gpu-reference (gpucc =m) | 2026-10-29 | PASS | all contract checks; GX genpd attached; black screen fixed by gpucc/gxclkctl =m |
 | g1 control | lab-43 (package) | 2026-10-28 | PASS (recovered) | CP hang caught by the sw hangcheck in about 5 s, one `hangcheck recover!`; no GMU wedge path exercised |
-| g1 recover (5x + MODE=always 1x) | 60-gpu-reference (gpucc =m) | 2026-10-29 | gpu-fault 5/5 PASS; pinned run pending | hangcheck subtest fails identically on the package kernel (pre-existing sw-hangcheck quirk) |
+| g1 recover (5x + MODE=always 1x) | 60-gpu-reference (gpucc =m, + rpm-forbidden recover fix) | 2026-10-29 | gpu-fault 5/5 PASS; pinned PASS after commit 13 | hangcheck subtest fails identically on the package kernel (pre-existing sw-hangcheck quirk) |
 | g2 (cycles: ) | | | | |
 | g3 | | | | |
 | g4 (idle mW: ) | | | | |
