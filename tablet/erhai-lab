@@ -262,6 +262,88 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ mode ---
+
+MODES = ("once", "always")
+_MODE_RE = re.compile(r"^[ \t]*MODE=([^\r\n]*)", re.MULTILINE)
+PIN_SERVICE = {"once": "erhai-gpu-pin-once.service", "always": "erhai-gpu-pin.service"}
+
+
+def read_mode(text: str) -> str:
+    """Value of the last uncommented MODE= line."""
+    found = _MODE_RE.findall(text)
+    if not found:
+        raise LabError("no MODE= line in the pin config")
+    return found[-1].strip()
+
+
+def set_mode_text(text: str, mode: str) -> str:
+    """text with only the last uncommented MODE= line changed."""
+    if mode not in MODES:
+        raise LabError(f"unknown mode {mode!r}; use once or always")
+    last = None
+    for last in _MODE_RE.finditer(text):
+        pass
+    if last is None:
+        raise LabError("no MODE= line in the pin config; refusing to guess")
+    return text[:last.start(1)] + mode + text[last.end(1):]
+
+
+def write_mode(conf: Path, mode: str, run=subprocess.run) -> None:
+    """Rewrite MODE= in conf atomically, then align the two pin services.
+
+    MODE=once  <=> erhai-gpu-pin-once.service enabled, erhai-gpu-pin.service disabled;
+    MODE=always is the reverse. Nothing is started or stopped: boot-time only."""
+    if mode not in MODES:
+        raise LabError(f"unknown mode {mode!r}; use once or always")
+    tmp = None
+    try:
+        with open(conf, newline="") as f:  # keep CRLF/no-final-newline as is
+            text = f.read()
+        new = set_mode_text(text, mode)
+        st = conf.stat()
+        fd, tmp = tempfile.mkstemp(dir=conf.parent, prefix=f".{conf.name}.")
+        with os.fdopen(fd, "w", newline="") as f:
+            f.write(new)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, st.st_mode & 0o7777)
+        if os.geteuid() == 0:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        os.replace(tmp, conf)
+        tmp = None
+    except OSError as e:
+        raise LabError(f"could not rewrite {conf}: {e}") from e
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    other = "once" if mode == "always" else "always"
+    for action, svc in (("enable", PIN_SERVICE[mode]), ("disable", PIN_SERVICE[other])):
+        cmd = ["systemctl", action, svc]
+        try:
+            rc = run(cmd).returncode
+        except OSError as e:
+            raise LabError(f"{' '.join(cmd)} could not run: {e}; "
+                           f"{conf} is already rewritten to MODE={mode}") from e
+        if rc != 0:
+            raise LabError(f"{' '.join(cmd)} failed (exit {rc}); "
+                           f"{conf} is already rewritten to MODE={mode}")
+
+
+def cmd_mode(args: argparse.Namespace) -> int:
+    require_root("mode")
+    try:
+        old = read_mode(PIN_CONF.read_text())
+    except OSError as e:
+        raise LabError(f"cannot read {PIN_CONF}: {e}") from e
+    write_mode(PIN_CONF, args.mode)
+    print(f"MODE={args.mode} (was {old}); takes effect at the next boot")
+    return 0
+
+
 # ------------------------------------------------------------------- cli ---
 
 def require_root(what: str) -> None:
@@ -285,6 +367,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("whoami", help="which lab candidate is booted").set_defaults(func=cmd_whoami)
     sub.add_parser("setup", help="install g1 tools and build IGT (root)"
                    ).set_defaults(func=cmd_setup)
+    m = sub.add_parser("mode", help="set the GPU pin policy and its services (root)")
+    m.add_argument("mode", choices=MODES)
+    m.set_defaults(func=cmd_mode)
     return p
 
 
