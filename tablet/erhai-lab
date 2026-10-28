@@ -24,6 +24,8 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
                       g2: count GPU runtime-PM cycles across reboots with an hourly
                       timer; start/stop/tick need root, status shows hours, cycles,
                       boots, resets and GPU wedge lines
+  report [--out FILE] all evidence as Markdown for the ladder Results (no root; run as
+                      root to include the soak's kernel wedge lines)
 
 Rungs, experiments and their numbers are described in docs/ladder.md.
 """
@@ -953,6 +955,137 @@ def cmd_soak(args: argparse.Namespace) -> int:
             "status": soak_status}[args.soak_cmd]()
 
 
+# ---------------------------------------------------------------- report ---
+
+NO_WEDGE_LOGS = "wedge lines not collected (run as root: erhai-gpu-lab report)"
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(errors="replace")
+    except OSError as e:
+        return f"unreadable: {e}"
+
+
+def _report_boots(boots: list[dict[str, str]]) -> list[str]:
+    out = ["## Boots", "", "| boot | kver | cand | mode | prev |", "|---|---|---|---|---|"]
+    for rec in boots:
+        out.append("| " + " | ".join([rec.get("boot", "-")[:8]]
+                                     + [rec.get(k, "-") for k in ("kver", "cand", "mode", "prev")])
+                   + " |")
+    return out
+
+
+def _report_g0(path: Path) -> list[str]:
+    lines = _read_text(path).splitlines()
+    count = {k: sum(1 for ln in lines if ln.startswith(k + " ")) for k in ("PASS", "FAIL", "INFO")}
+    out = [f"### {path.name}", ""]
+    if lines and lines[0].startswith("#"):
+        out += [f"`{lines[0]}`", ""]
+    out.append(f"PASS {count['PASS']} / FAIL {count['FAIL']} / INFO {count['INFO']}")
+    fails = [ln for ln in lines if ln.startswith("FAIL ")]
+    if fails:
+        out += ["", "```", *fails, "```"]
+    return out
+
+
+def _report_g1(path: Path) -> list[str]:
+    lines = _read_text(path).splitlines()
+    if not any(ln.startswith("RESULT ") for ln in lines):
+        lines.append("RESULT missing (froze or interrupted)")
+    return [f"### {path.name}", "", "```", *lines, "```"]
+
+
+def _report_soak(state: Path, boots: list[dict[str, str]],
+                 kernel_logs: dict[str, str] | None) -> list[str]:
+    try:
+        soak = _read_soak(state)
+    except LabError as e:
+        return ["## Soak", "", str(e)]
+    if soak is None:
+        return []
+    cycles_log = _read_text(state / SOAK_CYCLES_LOG)
+    if cycles_log.startswith("unreadable: "):
+        cycles_log = ""
+    s = soak_summary(cycles_log, boots, soak.get("start_line", 0), kernel_logs or {},
+                     soak.get("start_boot"))
+    out = ["## Soak", "", "```", f"hours: {s['hours']:.2f}",
+           f"cycles: {s['cycles']} (>= {SOAK_TARGET_CYCLES}: {'yes' if s['cycles_ok'] else 'no'})",
+           f"boots: {s['boots']}"]
+    out += [f"reset {bid[:8]} {kind}" for bid, kind in s["resets"]]
+    out += [f"wedge {bid[:8]} {line}" for bid, line in s["wedge_lines"]]
+    out.append("```")
+    if kernel_logs is None:
+        out += ["", NO_WEDGE_LOGS]
+    return out
+
+
+def _report_power(path: Path) -> str:
+    samples = []
+    for line in _read_text(path).splitlines():
+        try:
+            e, v, i = (int(w) for w in line.split())
+        except ValueError:
+            continue
+        samples.append((e, v, i))
+    try:
+        avg = avg_discharge_mw(samples)
+    except LabError as e:
+        return f"- {path.name}: {e}"
+    return (f"- {path.name}: avg {avg:.0f} mW over {len(samples)} samples; "
+            f"baseline {BASELINE_MW} mW; candidate <= baseline: "
+            f"{'yes' if avg <= BASELINE_MW else 'no'}")
+
+
+def render_report(state: Path, kernel_logs: dict[str, str] | None = None) -> str:
+    """All evidence in `state` as Markdown for docs/ladder.md Results.
+
+    kernel_logs maps a dashless boot id to its kernel log for the soak's wedge
+    lines; None means they were not collected (not root). Missing files are
+    skipped; with no evidence at all the result is 'No evidence in <state>.'"""
+    def files(pattern: str) -> list[Path]:
+        return sorted(p for p in state.glob(pattern) if p.is_file()) if state.is_dir() else []
+
+    boots = _boots_records(state)
+    g0, g1, power = files("g0-*.txt"), files("g1-summary-*.txt"), files("power-*.txt")
+    soak = _report_soak(state, boots, kernel_logs)
+    sections = []
+    if boots:
+        sections.append(_report_boots(boots))
+    if g0:
+        sections.append(["## g0"] + [ln for p in g0 for ln in ["", *_report_g0(p)]])
+    if g1:
+        sections.append(["## g1"] + [ln for p in g1 for ln in ["", *_report_g1(p)]])
+    if soak:
+        sections.append(soak)
+    if power:
+        sections.append(["## Power", ""] + [_report_power(p) for p in power])
+    if not sections:
+        return f"No evidence in {state}."
+    return "\n\n".join("\n".join(s) for s in sections) + "\n"
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    kernel_logs = None
+    if os.geteuid() == 0:
+        try:
+            soak = _read_soak(STATE_DIR)
+        except LabError:
+            soak = None     # render_report shows the unreadable soak.json itself
+        ids = soak_boot_ids(_boots_records(STATE_DIR), soak.get("start_line", 0),
+                            soak.get("start_boot")) if soak else []
+        kernel_logs = {bid: _journal("-k", "-b", bid) or "" for bid in ids}
+    text = render_report(STATE_DIR, kernel_logs)
+    if args.out:
+        try:
+            Path(args.out).write_text(text if text.endswith("\n") else text + "\n")
+        except OSError as e:
+            raise LabError(f"cannot write {args.out}: {e}") from e
+    else:
+        print(text, end="" if text.endswith("\n") else "\n")
+    return 0
+
+
 # ------------------------------------------------------------------- cli ---
 
 def require_root(what: str) -> None:
@@ -1008,6 +1141,9 @@ def build_parser() -> argparse.ArgumentParser:
     ksub.add_parser("tick", help="run one cycle window (root, soak service)")
     ksub.add_parser("status", help="hours, cycles, boots, resets and wedge lines")
     k.set_defaults(func=cmd_soak)
+    r = sub.add_parser("report", help="all evidence as Markdown for the ladder Results")
+    r.add_argument("--out", metavar="FILE", help="write FILE instead of printing")
+    r.set_defaults(func=cmd_report)
     return p
 
 
