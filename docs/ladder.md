@@ -177,6 +177,18 @@ PASS runtime-suspends suspended
 
 Verdict: as expected. Contract (1)-(5) PASS (`probe`, `zap`, `renderer`, `pin-released`, `shell-on-gpu`); the bug is visible (`gxclkctl-bound` driver=none, `gmu-genpd` genpd:1 missing for 3d6a000.gmu, `gx-gdsc-summary` absent, `-19` at GPU load); `runtime-suspends` PASS with the pin released.
 
+### g1 control (`lab-43`, 2026-10-28, `MODE=once`, `control=auto`)
+
+`sudo erhai-gpu-lab g1 --runs 1 --hangcheck 0` → `PASS g1 gpu-fault` (IGT `Subtest gpu-fault: SUCCESS (6.057s)`, recover=1, cx_not_collapsed=0, hw_init_errors=0). Evidence: `~/gpu-lab-evidence/g1-gpu-fault-20261028-183619.txt`, `g1-summary-7.3.0-rc5-sm8750-themojoman-lab-43-pr-dual-pump-f78af4d1.txt`.
+
+```
+18:36:24 hangcheck_handler *ERROR* 44050031: hangcheck detected gpu lockup rb 0!   (completed 152364, submitted 152372)
+18:36:24 recover_worker    *ERROR* 44050031: hangcheck recover!   offending task: msm_recovery --run-subtest gpu-fault
+18:36:25 [IGT] msm_recovery: finished subtest gpu-fault, SUCCESS
+```
+
+Reading: the CP-hang path recovers cleanly on today's kernel. The hang was caught by the software hangcheck timer about 5 s after submit; there was no hardware error IRQ for the bad packet. No GMU OOB/HFI line, no `cx gdsc didn't collapse`, and the 15 good submits were replayed. This is the "control recovers" branch of the g1 control row. On the candidate, g1 therefore only shows that the CP-hang path still works, and the P1a proof (GMU-wedge recovery through the forced GX collapse) rests on the first natural wedge in g2/g4. This matches the design: a CP hang leaves `gmu->hung == false`, so the graceful GMU shutdown drops GX without the missing GX genpd.
+
 ### g0 candidate
 
 ```
@@ -207,7 +219,7 @@ for i in $(seq 180); do echo "$(date +%s) $(cat $B/voltage_now) $(cat $B/current
 | g-1 | | | | |
 | g0 control | lab-43 (package) | 2026-10-28 | as expected | renderer check fixed to accept `Adreno (TM) 830` |
 | g0 | | | | |
-| g1 control | | | | |
+| g1 control | lab-43 (package) | 2026-10-28 | PASS (recovered) | CP hang caught by the sw hangcheck in about 5 s, one `hangcheck recover!`; no GMU wedge path exercised |
 | g1 recover (5x + MODE=always 1x) | | | | |
 | g2 (cycles: ) | | | | |
 | g3 | | | | |
