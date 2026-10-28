@@ -426,12 +426,22 @@ def _verdict(path: Path) -> str:
     return "FAIL" if any(line.startswith("FAIL ") for line in lines) else "PASS"
 
 
+def prev_boot_id(boots_text: str, this_boot: str) -> str | None:
+    """boot= of the last boots.log line, unless there is none or it is this boot."""
+    recs = parse_boots(boots_text)
+    last = recs[-1].get("boot") if recs else None
+    return last if last and last != this_boot else None
+
+
 def boot_run(state: Path, ident: dict, prev_tail: str | None, cur_journal: str,
-             pstore_n: int, run_g0) -> str:
+             pstore_n: int, run_g0, preflight=None) -> str:
     """Log this boot; run the queued g0 if the expected kernel booted.
 
     ident keys: boot_id, kver, cand ('package' or a candidate), build, stack, mode.
-    run_g0(out_path) appends the checker's output to out_path."""
+    run_g0(out_path) appends the checker's output to out_path. preflight() runs
+    before anything is written for a run and may raise LabError (missing helper).
+    The queue is consumed before run_g0, so a rung runs at most once: a reset or
+    error mid-run never repeats it on a later boot."""
     prev = classify_prev_boot(prev_tail, cur_journal)
     state.mkdir(parents=True, exist_ok=True)
     with open(state / BOOTS_LOG, "a") as f:
@@ -446,12 +456,14 @@ def boot_run(state: Path, ident: dict, prev_tail: str | None, cur_journal: str,
                 f"booted {ident['cand']}; kept")
     if q["label"] != "g0":
         raise LabError("only g0 runs at boot")
+    if preflight is not None:
+        preflight()
     out = state / f"{q['label']}-{ident['kver']}-{ident['boot_id'][:8]}.txt"
     out.write_text(f"# kver={ident['kver']} cand={ident['cand']} build={ident['build']} "
                    f"stack={ident['stack']} mode={ident['mode']} prev={prev}\n")
+    (state / QUEUE_FILE).unlink()
     run_g0(out)
     verdict = _verdict(out)
-    (state / QUEUE_FILE).unlink()
     return f"ran {q['label']} -> {out} ({verdict})"
 
 
@@ -490,8 +502,18 @@ def cmd_boot_run(args: argparse.Namespace) -> int:
             pstore_n = len(list(PSTORE_DIR.iterdir()))
         except OSError:
             pstore_n = 0
-        msg = boot_run(STATE_DIR, _gather_ident(), _journal("-b", "-1", "-n", "20"),
-                       _journal("-b") or "", pstore_n, _run_g0)
+        ident = _gather_ident()
+        try:
+            boots_text = (STATE_DIR / BOOTS_LOG).read_text()
+        except OSError:
+            boots_text = ""
+        # after a cold reset this boot's clock starts at 1970, so trust our own log
+        # over `journalctl -b -1` to name the previous boot
+        pid = prev_boot_id(boots_text, ident["boot_id"])
+        prev_tail = (_journal("-b", pid, "-n", "20") if pid else None) \
+            or _journal("-b", "-1", "-n", "20")
+        msg = boot_run(STATE_DIR, ident, prev_tail, _journal("-b") or "", pstore_n,
+                       _run_g0, preflight=lambda: helper("gpu-checks.sh"))
     except Exception as e:  # noqa: BLE001 -- reported once, never retried
         print(f"erhai-lab: boot-run: {e}", file=sys.stderr)
         return 1

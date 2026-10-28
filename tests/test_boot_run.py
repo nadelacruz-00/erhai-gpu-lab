@@ -2,6 +2,7 @@
 """erhai-gpu-lab boot log, reset classification and the queued g0 rung."""
 
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -127,6 +128,49 @@ class BootRun(unittest.TestCase):
         self.assertEqual(len((self.state / "boots.log").read_text().splitlines()), 1)
 
 
+    def test_boot_run_consumes_queue_before_g0_even_if_it_raises(self):
+        self.queue()
+
+        def boom(out):
+            raise lab.LabError("g0 died")
+        with self.assertRaises(lab.LabError):
+            self.run_boot(run_g0=boom)
+        self.assertFalse((self.state / "queue.json").exists())
+        ev = self.state / "g0-7.3.0-test-01234567.txt"
+        self.assertTrue(ev.read_text().startswith("# kver=7.3.0-test cand=package"))
+        self.assertEqual(len((self.state / "boots.log").read_text().splitlines()), 1)
+
+    def test_boot_run_missing_helper_keeps_queue_and_writes_no_evidence(self):
+        self.queue()
+
+        def missing():
+            raise lab.LabError("gpu-checks.sh not installed")
+        with self.assertRaises(lab.LabError):
+            self.run_boot(preflight=missing)
+        self.assertTrue((self.state / "queue.json").exists())
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.state.glob("g0-*.txt")), [])
+        self.assertEqual(len((self.state / "boots.log").read_text().splitlines()), 1)
+
+    def test_boot_run_preflight_not_called_without_a_run(self):
+        def never():
+            raise AssertionError("preflight called")
+        self.assertEqual(self.run_boot(preflight=never), "logged")
+
+
+class PrevBootId(unittest.TestCase):
+    def test_prev_boot_id_last_line(self):
+        text = "boot=aaa kver=x\nboot=bbb kver=x\n"
+        self.assertEqual(lab.prev_boot_id(text, "ccc"), "bbb")
+
+    def test_prev_boot_id_empty_log(self):
+        self.assertIsNone(lab.prev_boot_id("", "ccc"))
+        self.assertIsNone(lab.prev_boot_id("\n\n", "ccc"))
+
+    def test_prev_boot_id_last_is_this_boot(self):
+        self.assertIsNone(lab.prev_boot_id("boot=aaa kver=x\nboot=ccc kver=x\n", "ccc"))
+
+
 class Queue(unittest.TestCase):
     def test_queue_package_matches_only_package(self):
         self.assertTrue(lab.queue_matches("package", "package"))
@@ -203,7 +247,6 @@ class Status(unittest.TestCase):
             (state / "queue.json").write_text(json.dumps({"label": "g0", "expect": "package"}))
             for i in range(7):
                 (state / f"g0-{i}.txt").write_text("PASS x\n")
-                import os
                 os.utime(state / f"g0-{i}.txt", (1000 + i, 1000 + i))
             text = lab.status_report(state, "w", "once")
         self.assertIn("queue: g0 expects package", text)
