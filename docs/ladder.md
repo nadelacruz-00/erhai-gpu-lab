@@ -210,6 +210,16 @@ Load: `ci/build-candidate.sh` run locally on 8 cores, with the CPU caps lifted t
 
 Reading: GMU-attributed (clause 1), and the P1a failure seen live: recovery ran twice and then stopped, with no loop this time, and the GPU never came back. The trigger time is the new data point. The wedge came about 10 s into the load, at the first thermal clamp step (0 to 6) and the CPU's largest power step, at 65 C, not at the 98 C peak. That favours a power or rail transient over temperature as the wedge trigger (P1b), something g2/g4 on the candidate can try to reproduce: a burst of full-clock CPU load while the GPU is runtime-suspending or resuming.
 
+### Black screen on 60-gpu-reference: GPU clock drivers built in (2026-10-28/29)
+
+Symptom: with the full stack, the panel went fully dark (no backlight glow) right after rEFInd. Most boots froze before journald reached disk, with no panic, no pstore record and no network. The three boots that did reach userspace (24c0f462, 5e1d4fed, fa58bc06) logged 9-10 `arm-smmu 15000000.iommu: Unhandled context fault ... SID=0x800` (MDSS) at iova `0xfc8xxxxx` (the bootloader's splash framebuffer) as apps_smmu probed. lab-43 and package boots log 0.
+
+Bisection (CI builds): p2 (patches 1-2) froze; nopd (gpucc without its MX/CX power-domains), devlink (no `fw_devlink=off`), mdssid (`qcom,sm8750-mdss` added to the SMMU identity list) and order (adreno_smmu after gpucc) all stayed black. The working kernels build `CONFIG_SM_GPUCC_8750=m`; every lab candidate built it `=y` (yzddmr6 `bd4f02e3f7`, carried as patch 5, plus this candidate's `extra.config`). That symbol builds both `gpucc-sm8750` and `gxclkctl-kaanapali`.
+
+Fix: `60-gpu-reference-gpuccm` (full stack, `=m`) shows the desktop. SMMU faults: 0. gxclkctl bound, GMU `genpd:0`+`genpd:1`, no GX warning, GPU runtime-suspends with `control=auto`, renderer `Adreno (TM) 830`. The defconfig commit is dropped from `erhai-gpu-reference` (now 12 commits; the pre-change tip is kept as `erhai-gpu-reference-before-gpucc-m`). `extra.config` sets `=m`. Built in, the two drivers probe in the first second of boot with `fw_devlink=off` ordering nothing. Built as modules, they load from the root fs after their providers. The detailed mechanism (early gpucc/gxclkctl probe stalling the bus or yanking the splash scanout) is inferred, not traced.
+
+Side finding: a local gcc-15 build (the package kernel b37) boots, so local builds are not inherently broken. The no-trace boots were this freeze, plus journald's 5-minute sync interval (`/etc/systemd/journald.conf.d/10-erhai-lab-sync.conf` now sets 10 s).
+
 ### g0 candidate
 
 ```
