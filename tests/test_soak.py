@@ -16,9 +16,9 @@ TABLET = REPO_ROOT / "tablet"
 A, B, C, D = ("a" * 32, "b" * 32, "c" * 32, "d" * 32)
 
 
-def boot(bid, prev="clean"):
+def boot(bid, prev="clean", **kw):
     return {"boot": bid, "kver": "7.3.0", "cand": "package", "build": "-",
-            "mode": "once", "prev": prev, "pstore": "0"}
+            "mode": "once", "prev": prev, "pstore": "0", **kw}
 
 
 def window(boot_id, cycles, secs=3000):
@@ -72,6 +72,20 @@ class SoakSummaryTest(unittest.TestCase):
         s = lab.soak_summary("", boots, 1, {}, start_boot=A)
         self.assertEqual(s["boots"], 2)
         self.assertEqual(lab.soak_boot_ids(boots, 1, A), [A, B])
+
+    def test_soak_summary_counts_unlogged_resets(self):
+        # C names two boots that froze before boot-run logged them
+        boots = [boot(A), boot(B, "warm"), boot(C, "unknown", unlogged="11111111,22222222")]
+        s = lab.soak_summary("", boots, 1, {})
+        self.assertEqual(s["resets"], [(B, "warm"), ("11111111", "unlogged"),
+                                       ("22222222", "unlogged")])
+        self.assertEqual(s["boots"], 5)
+
+    def test_start_boot_unlogged_predecessors_are_not_soak_resets(self):
+        boots = [boot(D), boot(A, "unknown", unlogged="11111111"), boot(B)]
+        s = lab.soak_summary("", boots, 2, {})
+        self.assertEqual(s["resets"], [])
+        self.assertEqual(s["boots"], 2)
 
     def test_soak_summary_collects_wedge_lines(self):
         klog = ("msm_dpu ae01000.display-controller: vblank timeout\n"

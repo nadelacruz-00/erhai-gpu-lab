@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """erhai-gpu-lab boot log, reset classification and the queued g0 rung."""
 
+import contextlib
+import io
 import json
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from labtool import REPO_ROOT, lab
 
@@ -157,6 +161,146 @@ class BootRun(unittest.TestCase):
             raise AssertionError("preflight called")
         self.assertEqual(self.run_boot(preflight=never), "logged")
 
+    def test_boot_run_unlogged_writes_prev_unknown(self):
+        # an unclean journal tail is ignored: the boot before this one is unknown
+        self.run_boot(prev_tail=fx("prev-unclean.txt"), pstore_n=1,
+                      unlogged=["1" * 32, "2" * 32])
+        line = (self.state / "boots.log").read_text()
+        self.assertTrue(line.endswith(" prev=unknown pstore=1 "
+                                      "unlogged=11111111,22222222\n"), line)
+        rec = lab.parse_boots(line)[0]
+        self.assertEqual(list(rec), ["boot", "kver", "cand", "build", "mode", "prev",
+                                     "pstore", "unlogged"])
+
+    def test_boot_run_unlogged_g0_header(self):
+        self.queue()
+        self.run_boot(unlogged=["1" * 32])
+        ev = self.state / "g0-7.3.0-test-01234567.txt"
+        self.assertTrue(ev.read_text().splitlines()[0].endswith(" prev=unknown"))
+
+    def test_boot_run_no_unlogged_key_without_unlogged_boots(self):
+        self.run_boot(unlogged=[])
+        self.assertNotIn("unlogged", (self.state / "boots.log").read_text())
+
+
+def listing(*pairs):
+    """journalctl --list-boots -o json entries from (index, boot_id) pairs."""
+    return [{"index": i, "boot_id": b, "first_entry": 1, "last_entry": 2} for i, b in pairs]
+
+
+OLD, A, X, Y, C = ("0" * 32, "a" * 32, "e" * 32, "f" * 32, "c" * 32)
+
+
+class UnloggedBoots(unittest.TestCase):
+    def logged(self, *ids):
+        return [{"boot": b, "prev": "clean"} for b in ids]
+
+    def test_unlogged_boot_between_last_logged_and_this_boot(self):
+        # OLD predates the lab (never logged): only boots after the last logged count
+        lst = listing((-3, OLD), (-2, A), (-1, X), (0, C))
+        self.assertEqual(lab.unlogged_boots(lst, self.logged(A), C), [X])
+
+    def test_none_when_last_logged_is_the_previous_boot(self):
+        lst = listing((-2, OLD), (-1, A), (0, C))
+        self.assertEqual(lab.unlogged_boots(lst, self.logged(A), C), [])
+
+    def test_empty_boots_log_is_no_guess(self):
+        lst = listing((-2, OLD), (-1, A), (0, C))
+        self.assertEqual(lab.unlogged_boots(lst, [], C), [])
+
+    def test_last_logged_missing_from_listing_is_no_guess(self):
+        lst = listing((-2, OLD), (-1, X), (0, C))
+        self.assertEqual(lab.unlogged_boots(lst, self.logged(A), C), [])
+
+    def test_index_order_and_exclusions(self):
+        # unsorted listing; Y logged earlier is not unlogged; this boot is excluded
+        lst = listing((0, C), (-1, X), (-4, A), (-2, Y), (-3, OLD))
+        self.assertEqual(lab.unlogged_boots(lst, self.logged(Y, A), C), [OLD, X])
+
+    def test_this_boot_already_logged(self):
+        # boot-run run twice in one boot: the last line is this boot, index 0
+        lst = listing((-1, A), (0, C))
+        self.assertEqual(lab.unlogged_boots(lst, self.logged(A, C), C), [])
+
+    def test_malformed_entries_are_skipped(self):
+        lst = [None, {"index": "x", "boot_id": X}, {"boot_id": Y}, *listing((-1, A), (0, C))]
+        self.assertEqual(lab.unlogged_boots(lst, self.logged(A), C), [])
+
+
+class CmdBootRun(unittest.TestCase):
+    """cmd_boot_run with the journal, boot id, cmdline and state patched."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.state = self.dir / "state"
+        self.state.mkdir()
+        (self.dir / "boot_id").write_text("cccccccc-cccc-cccc-cccc-cccccccccccc\n")
+        (self.dir / "cmdline").write_text("quiet\n")
+        (self.dir / "gpu-pin.conf").write_text("MODE=once\n")
+        self.journal_calls = []
+        for p in (mock.patch.object(lab, "STATE_DIR", self.state),
+                  mock.patch.object(lab, "BOOT_ID_PATH", self.dir / "boot_id"),
+                  mock.patch.object(lab, "PROC_CMDLINE", self.dir / "cmdline"),
+                  mock.patch.object(lab, "PIN_CONF", self.dir / "gpu-pin.conf"),
+                  mock.patch.object(lab, "PSTORE_DIR", self.dir / "no-pstore"),
+                  mock.patch.object(lab, "require_root"),
+                  mock.patch.object(lab, "_journal", side_effect=self.journal),
+                  mock.patch.object(lab.os, "uname",
+                                    return_value=mock.Mock(release="7.3.0-test"))):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def journal(self, *args):
+        self.journal_calls.append(args)
+        if args[:2] == ("-b", A):
+            return fx("prev-clean.txt")
+        if args[:2] == ("-b", "-1"):
+            return fx("prev-unclean.txt")
+        return fx("cur-normal.txt")
+
+    def run_cmd(self, list_boots):
+        with mock.patch.object(lab.subprocess, "run", side_effect=list_boots) as run, \
+             contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = lab.cmd_boot_run(None)
+        self.assertEqual(rc, 0, err.getvalue())
+        for call in run.call_args_list:
+            self.assertEqual(call.args[0],
+                             ["journalctl", "--list-boots", "-o", "json", "--no-pager"])
+        return lab.parse_boots((self.state / "boots.log").read_text())[-1]
+
+    def listed(self, *pairs):
+        out = json.dumps(listing(*pairs))
+        return lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, out, "")
+
+    def test_cmd_boot_run_names_unlogged_boot_instead_of_guessing(self):
+        # A ended cleanly, X froze before boot-run could log it, C is this boot
+        (self.state / "boots.log").write_text(f"boot={A} prev=none pstore=0\n")
+        rec = self.run_cmd(self.listed((-3, OLD), (-2, A), (-1, X), (0, C)))
+        self.assertEqual(rec["boot"], C)
+        self.assertEqual((rec["prev"], rec["unlogged"]), ("unknown", "eeeeeeee"))
+        self.assertFalse(any(a[:1] == ("-b",) and len(a) > 2 for a in self.journal_calls),
+                         self.journal_calls)
+
+    def test_cmd_boot_run_previous_boot_logged_uses_its_journal(self):
+        (self.state / "boots.log").write_text(f"boot={A} prev=none pstore=0\n")
+        rec = self.run_cmd(self.listed((-2, OLD), (-1, A), (0, C)))
+        self.assertEqual(rec["prev"], "clean")
+        self.assertNotIn("unlogged", rec)
+        self.assertIn(("-b", A, "-n", "20"), self.journal_calls)
+
+    def test_cmd_boot_run_list_boots_failure_keeps_old_behaviour(self):
+        for result in (lambda *a, **kw: subprocess.CompletedProcess(a[0], 1, "", "x"),
+                       lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "not json", ""),
+                       lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "{}", ""),
+                       OSError("no journalctl")):
+            (self.state / "boots.log").write_text(f"boot={A} prev=none pstore=0\n")
+            rec = self.run_cmd(result)
+            self.assertEqual(rec["prev"], "clean")
+            self.assertNotIn("unlogged", rec)
+
 
 class PrevBootId(unittest.TestCase):
     def test_prev_boot_id_last_line(self):
@@ -253,6 +397,26 @@ class Status(unittest.TestCase):
         self.assertEqual(len(re.findall(r"g0-\d\.txt", text)), 5)
         self.assertIn("g0-6.txt", text)
         self.assertNotIn("g0-1.txt", text)
+
+
+class ThisBootId(unittest.TestCase):
+    def test_this_boot_id_is_dashless(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "boot_id"
+            p.write_text("01234567-89ab-cdef-0123-456789abcdef\n")
+            with mock.patch.object(lab, "BOOT_ID_PATH", p):
+                self.assertEqual(lab.this_boot_id(), "0123456789abcdef0123456789abcdef")
+
+    def test_this_boot_id_unreadable_is_lab_error(self):
+        with mock.patch.object(lab, "BOOT_ID_PATH", Path("/nonexistent/boot_id")):
+            with self.assertRaisesRegex(lab.LabError, "cannot read /nonexistent/boot_id"):
+                lab.this_boot_id()
+
+    def test_single_boot_id_path(self):
+        self.assertFalse(hasattr(lab, "PROC_BOOT_ID"))
+        self.assertFalse(hasattr(lab, "_this_boot_id"))
+        src = (REPO_ROOT / "tablet" / "erhai-lab").read_text()
+        self.assertEqual(src.count("BOOT_ID_PATH.read_text"), 1)
 
 
 class UnitFile(unittest.TestCase):

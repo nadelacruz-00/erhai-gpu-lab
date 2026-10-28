@@ -53,7 +53,6 @@ LIB_DIR = Path("/usr/local/lib/erhai-gpu-lab")
 STATE_DIR = Path("/var/lib/erhai-gpu")
 PIN_CONF = Path("/etc/erhai/gpu-pin.conf")
 BATTERY = Path("/sys/class/power_supply/erhai-adsp-bat")
-PROC_BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 GPU_CONTROL = Path("/sys/devices/platform/soc@0/3d00000.gpu/power/control")
 
 
@@ -376,6 +375,14 @@ BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 _LABEL_RE = re.compile(r"^g[0-9]+[a-z0-9-]*$")
 
 
+def this_boot_id() -> str:
+    """The running boot's id without dashes, the key of every record."""
+    try:
+        return BOOT_ID_PATH.read_text().strip().replace("-", "")
+    except OSError as e:
+        raise LabError(f"cannot read {BOOT_ID_PATH}: {e}") from e
+
+
 def classify_prev_boot(prev_tail: str | None, cur_journal: str) -> str:
     """How the previous boot ended: none, clean, cold or warm.
 
@@ -448,21 +455,49 @@ def prev_boot_id(boots_text: str, this_boot: str) -> str | None:
     return last if last and last != this_boot else None
 
 
+def unlogged_boots(listing: list[dict], boots: list[dict], this_boot: str) -> list[str]:
+    """Journal boots after the last boots.log boot that boot-run never logged.
+
+    listing is `journalctl --list-boots -o json` ({"index", "boot_id", ...}). Only
+    boots with a higher index than the last logged boot count: the journal also
+    holds boots from before the lab was installed. This boot and logged ids are
+    left out. No guess (empty) without a logged boot that the listing knows.
+    Returns dashless ids in index order."""
+    entries = [(e["index"], e["boot_id"].replace("-", "").lower()) for e in listing
+               if isinstance(e, dict) and isinstance(e.get("index"), int)
+               and isinstance(e.get("boot_id"), str)]
+    last = boots[-1].get("boot") if boots else None
+    after = [i for i, bid in entries if bid == last]
+    if not after:
+        return []
+    logged = {rec.get("boot") for rec in boots}
+    return [bid for i, bid in sorted(entries)
+            if i > after[0] and bid != this_boot and bid not in logged]
+
+
 def boot_run(state: Path, ident: dict, prev_tail: str | None, cur_journal: str,
-             pstore_n: int, run_g0, preflight=None) -> str:
+             pstore_n: int, run_g0, preflight=None, unlogged: list[str] | None = None
+             ) -> str:
     """Log this boot; run the queued g0 if the expected kernel booted.
 
     ident keys: boot_id, kver, cand ('package' or a candidate), build, stack, mode.
+    unlogged: boots between the last logged boot and this one (unlogged_boots);
+    if any, the previous boot is `prev=unknown` and they are named on the line.
     run_g0(out_path) appends the checker's output to out_path. preflight() runs
     before anything is written for a run and may raise LabError (missing helper).
     The queue is consumed before run_g0, so a rung runs at most once: a reset or
     error mid-run never repeats it on a later boot."""
-    prev = classify_prev_boot(prev_tail, cur_journal)
+    if unlogged:
+        prev = "unknown"
+        extra = f" unlogged={','.join(bid[:8] for bid in unlogged)}"
+    else:
+        prev = classify_prev_boot(prev_tail, cur_journal)
+        extra = ""
     state.mkdir(parents=True, exist_ok=True)
     with open(state / BOOTS_LOG, "a") as f:
         f.write(f"boot={ident['boot_id']} kver={ident['kver']} cand={ident['cand']} "
                 f"build={ident['build']} mode={ident['mode']} prev={prev} "
-                f"pstore={pstore_n}\n")
+                f"pstore={pstore_n}{extra}\n")
     q = read_queue(state)
     if q is None:
         return "logged"
@@ -492,13 +527,29 @@ def _journal(*args: str) -> str | None:
     return r.stdout if r.returncode == 0 and r.stdout.strip() else None
 
 
+def _list_boots() -> list[dict]:
+    """`journalctl --list-boots` as JSON, or [] if it fails or is not a JSON list."""
+    try:
+        r = subprocess.run(["journalctl", "--list-boots", "-o", "json", "--no-pager"],
+                           capture_output=True, text=True, errors="replace")
+    except OSError:
+        return []
+    if r.returncode != 0:
+        return []
+    try:
+        listing = json.loads(r.stdout)
+    except ValueError:
+        return []
+    return listing if isinstance(listing, list) else []
+
+
 def _gather_ident() -> dict:
     cand, build, stack = lab_identity(PROC_CMDLINE.read_text())
     try:
         mode = read_mode(PIN_CONF.read_text())
     except (OSError, LabError):
         mode = "?"
-    return {"boot_id": BOOT_ID_PATH.read_text().strip().replace("-", ""),
+    return {"boot_id": this_boot_id(),
             "kver": os.uname().release, "cand": cand or "package",
             "build": build or "-", "stack": stack or "-", "mode": mode}
 
@@ -522,13 +573,20 @@ def cmd_boot_run(args: argparse.Namespace) -> int:
             boots_text = (STATE_DIR / BOOTS_LOG).read_text()
         except OSError:
             boots_text = ""
-        # after a cold reset this boot's clock starts at 1970, so trust our own log
-        # over `journalctl -b -1` to name the previous boot
-        pid = prev_boot_id(boots_text, ident["boot_id"])
-        prev_tail = (_journal("-b", pid, "-n", "20") if pid else None) \
-            or _journal("-b", "-1", "-n", "20")
+        # a boot that froze before boot-run ran has no boots.log line: name it
+        # instead of classifying the boot before it as the previous one
+        unlogged = unlogged_boots(_list_boots(), parse_boots(boots_text),
+                                  ident["boot_id"])
+        prev_tail = None
+        if not unlogged:
+            # after a cold reset this boot's clock starts at 1970, so trust our own
+            # log over `journalctl -b -1` to name the previous boot
+            pid = prev_boot_id(boots_text, ident["boot_id"])
+            prev_tail = (_journal("-b", pid, "-n", "20") if pid else None) \
+                or _journal("-b", "-1", "-n", "20")
         msg = boot_run(STATE_DIR, ident, prev_tail, _journal("-b") or "", pstore_n,
-                       _run_g0, preflight=lambda: helper("gpu-checks.sh"))
+                       _run_g0, preflight=lambda: helper("gpu-checks.sh"),
+                       unlogged=unlogged)
     except Exception as e:  # noqa: BLE001 -- reported once, never retried
         print(f"erhai-lab: boot-run: {e}", file=sys.stderr)
         return 1
@@ -684,9 +742,9 @@ def cmd_g1(args: argparse.Namespace) -> int:
     runs, hangcheck = g1_counts(args)
     plan = g1_plan(runs, hangcheck)
     helper("igt-recovery")     # fail before the prompt if it is not installed
+    boot_id = this_boot_id()
     try:
         control = GPU_CONTROL.read_text().strip()
-        boot_id = BOOT_ID_PATH.read_text().strip().replace("-", "")
         cand = lab_identity(PROC_CMDLINE.read_text())[0] or "package"
     except OSError as e:
         raise LabError(f"cannot read system state: {e}") from e
@@ -768,10 +826,7 @@ def cmd_power(args: argparse.Namespace) -> int:
     if args.minutes < 0:
         raise LabError("--minutes must not be negative")
     kver = os.uname().release
-    try:
-        boot_id = PROC_BOOT_ID.read_text().strip()
-    except OSError as e:
-        raise LabError(f"cannot read {PROC_BOOT_ID}: {e}") from e
+    boot_id = this_boot_id()
     count = args.minutes * 60 // POWER_INTERVAL_S
     print("Method: unplug the charger, screen on at a fixed brightness, Wi-Fi on, "
           "no apps running.")
@@ -827,7 +882,9 @@ def soak_summary(cycles_log: str, boots: list[dict], start_line: int,
 
     Only boot ids and line order are used, never timestamps (a cold reset restarts
     the clock at 1970). A reset is a boot after the start whose `prev` is warm or
-    cold; the start boot's own predecessor ended before the soak."""
+    cold, plus each boot named in `unlogged=` (it froze before boot-run logged
+    it; kind "unlogged", id8 only, counted in boots); the start boot's own
+    predecessors ended before the soak."""
     secs = cycles = 0
     for line in cycles_log.splitlines():
         rec = dict(w.split("=", 1) for w in line.split() if "=" in w)
@@ -838,13 +895,20 @@ def soak_summary(cycles_log: str, boots: list[dict], start_line: int,
         secs += s
         cycles += c
     ids = soak_boot_ids(boots, start_line, start_boot)
-    resets = [(rec["boot"], rec.get("prev", ""))
-              for rec in boots[start_line:]
-              if rec.get("boot") in ids and rec.get("boot") != ids[0]
-              and rec.get("prev") in ("warm", "cold")]
+    resets: list[tuple[str, str]] = []
+    unlogged = 0
+    for rec in boots[start_line:]:
+        if rec.get("boot") not in ids or rec.get("boot") == ids[0]:
+            continue
+        if rec.get("prev") in ("warm", "cold"):
+            resets.append((rec["boot"], rec["prev"]))
+        elif rec.get("prev") == "unknown" and rec.get("unlogged"):
+            lost = [bid for bid in rec["unlogged"].split(",") if bid]
+            resets += [(bid, "unlogged") for bid in lost]
+            unlogged += len(lost)
     wedges = [(bid, line) for bid in ids
               for line in kernel_logs.get(bid, "").splitlines() if WEDGE_RE.search(line)]
-    return {"hours": secs / 3600, "cycles": cycles, "boots": len(ids),
+    return {"hours": secs / 3600, "cycles": cycles, "boots": len(ids) + unlogged,
             "resets": resets, "wedge_lines": wedges,
             "cycles_ok": cycles >= SOAK_TARGET_CYCLES}
 
@@ -870,17 +934,10 @@ def _systemctl(*args: str) -> None:
         raise LabError(f"systemctl {' '.join(args)} failed")
 
 
-def _this_boot_id() -> str:
-    try:
-        return BOOT_ID_PATH.read_text().strip().replace("-", "")
-    except OSError as e:
-        raise LabError(f"cannot read {BOOT_ID_PATH}: {e}") from e
-
-
 def soak_start() -> int:
     require_root("soak start")
     state_file = STATE_DIR / SOAK_FILE
-    start = {"start_boot": _this_boot_id(),
+    start = {"start_boot": this_boot_id(),
              "start_line": len(_boots_records(STATE_DIR))}
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -921,7 +978,7 @@ def soak_tick() -> int:
         print(f"erhai-lab: soak tick: {why}, not recorded: {detail}", file=sys.stderr)
         return 1
     with open(STATE_DIR / SOAK_CYCLES_LOG, "a") as f:
-        f.write(f"boot={_this_boot_id()} secs={SOAK_WINDOW_S} cycles={m.group(1)}\n")
+        f.write(f"boot={this_boot_id()} secs={SOAK_WINDOW_S} cycles={m.group(1)}\n")
     return 0
 
 

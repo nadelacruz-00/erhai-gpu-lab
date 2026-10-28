@@ -74,7 +74,7 @@ class CmdPowerTest(unittest.TestCase):
                  mock.patch.object(lab, "require_root"), \
                  mock.patch.object(lab, "sample_battery", return_value=samples) as sb, \
                  mock.patch.object(lab.os, "uname") as un, \
-                 mock.patch.object(lab, "PROC_BOOT_ID", state / "boot_id"), \
+                 mock.patch.object(lab, "BOOT_ID_PATH", state / "boot_id"), \
                  contextlib.redirect_stdout(out):
                 un.return_value.release = "7.3.0-test"
                 rc = lab.cmd_power(argparse.Namespace(minutes=minutes))

@@ -56,6 +56,12 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(rows, [f"| aaaaaaaa | {K} | g0-x | once | clean |",
                                 f"| bbbbbbbb | {K} | g0-x | always | warm |"])
 
+    def test_report_boots_table_shows_prev_unknown(self):
+        self.put("boots.log", BOOT_A.replace("prev=clean pstore=0",
+                                             "prev=unknown pstore=0 unlogged=eeeeeeee"))
+        self.assertIn(f"| aaaaaaaa | {K} | g0-x | once | unknown |",
+                      lab.render_report(self.state))
+
     def test_report_includes_g1_and_power(self):
         self.put(f"g1-summary-{K}-aaaaaaaa.txt",
                  G1_HEADER + "\nPASS g1 gpu-fault\nPASS g1 hangcheck\nRESULT PASS\n")
