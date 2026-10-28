@@ -65,9 +65,12 @@ done
 
 gh run watch "$RUN" --exit-status
 
+# kernel.yml tags the release lab-<candidate>-<run_number>: fetch this run's
+# build, not whatever release of the candidate happens to be the latest.
+N=$(gh run view "$RUN" --json number -q .number)
 FETCH_OUT=$(mktemp)
 trap 'rm -f "$FETCH_OUT"' EXIT
-sudo erhai-gpu-lab fetch "$CAND" | tee "$FETCH_OUT"
+sudo erhai-gpu-lab fetch "$CAND" --tag "lab-$CAND-$N" | tee "$FETCH_OUT"
 KVER=$(sed -n 's|^installed /boot/\(.*\)\.efi .*|\1|p' "$FETCH_OUT" | tail -n 1)
 [ -n "$KVER" ] || KVER=lab-$CAND
 sudo erhai-gpu-lab queue g0 --expect "$CAND"

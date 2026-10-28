@@ -85,6 +85,14 @@ class ShipCandidateTest(unittest.TestCase):
     def test_syntax(self):
         subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
 
+    def test_fetches_the_release_of_the_watched_run(self):
+        # kernel.yml tags lab-<cand>-<run_number>; "latest" could be another run's build
+        text = SCRIPT.read_text()
+        self.assertIn('N=$(gh run view "$RUN" --json number -q .number)', text)
+        self.assertIn('sudo erhai-gpu-lab fetch "$CAND" --tag "lab-$CAND-$N"', text)
+        self.assertLess(text.index('gh run watch "$RUN"'), text.index("gh run view"))
+        self.assertNotRegex(text, r'erhai-gpu-lab fetch "\$CAND" *\|')
+
     def test_no_trailers(self):
         self.assertNotIn("Co-Authored-By", SCRIPT.read_text())
 
