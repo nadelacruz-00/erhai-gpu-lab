@@ -20,6 +20,10 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
                       build the pinned IGT msm_recovery under /var/lib/erhai-gpu/igt
   power [--minutes N] (root) sample the battery V*I while idle on battery and compare
                       the average with the 3639 mW baseline (default 30 minutes)
+  soak start|stop|tick|status
+                      g2: count GPU runtime-PM cycles across reboots with an hourly
+                      timer; start/stop/tick need root, status shows hours, cycles,
+                      boots, resets and GPU wedge lines
 
 Rungs, experiments and their numbers are described in docs/ladder.md.
 """
@@ -785,6 +789,170 @@ def cmd_power(args: argparse.Namespace) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ soak ---
+
+SOAK_FILE = "soak.json"
+SOAK_CYCLES_LOG = "soak-cycles.log"
+SOAK_TIMER = "erhai-gpu-lab-soak.timer"
+SOAK_WINDOW_S = 3000
+SOAK_TARGET_CYCLES = 1000
+WEDGE_RE = re.compile(r"GMU OOB|HFI .*timed out|hangcheck recover!|a8xx_recover|"
+                      r"cx gdsc didn't collapse")
+_CYCLES_LINE_RE = re.compile(r"\bcycles=(\d+)")
+
+
+def soak_boot_ids(boots: list[dict], start_line: int, start_boot: str | None = None
+                  ) -> list[str]:
+    """Boot ids of a soak: the start boot plus every boots.log line after start_line.
+
+    `soak start` runs after boot-run logged its own boot, so without start_boot the
+    start boot is the last line before start_line. Ids are deduplicated."""
+    ids = []
+    if start_boot is None and 0 < start_line <= len(boots):
+        start_boot = boots[start_line - 1].get("boot")
+    if start_boot:
+        ids.append(start_boot)
+    for rec in boots[start_line:]:
+        bid = rec.get("boot")
+        if bid and bid not in ids:
+            ids.append(bid)
+    return ids
+
+
+def soak_summary(cycles_log: str, boots: list[dict], start_line: int,
+                 kernel_logs: dict[str, str], start_boot: str | None = None) -> dict:
+    """Totals of a soak from its window log, boots.log and per-boot kernel logs.
+
+    Only boot ids and line order are used, never timestamps (a cold reset restarts
+    the clock at 1970). A reset is a boot after the start whose `prev` is warm or
+    cold; the start boot's own predecessor ended before the soak."""
+    secs = cycles = 0
+    for line in cycles_log.splitlines():
+        rec = dict(w.split("=", 1) for w in line.split() if "=" in w)
+        try:
+            s, c = int(rec["secs"]), int(rec["cycles"])
+        except (KeyError, ValueError):
+            continue
+        secs += s
+        cycles += c
+    ids = soak_boot_ids(boots, start_line, start_boot)
+    resets = [(rec["boot"], rec.get("prev", ""))
+              for rec in boots[start_line:]
+              if rec.get("boot") in ids and rec.get("boot") != ids[0]
+              and rec.get("prev") in ("warm", "cold")]
+    wedges = [(bid, line) for bid in ids
+              for line in kernel_logs.get(bid, "").splitlines() if WEDGE_RE.search(line)]
+    return {"hours": secs / 3600, "cycles": cycles, "boots": len(ids),
+            "resets": resets, "wedge_lines": wedges,
+            "cycles_ok": cycles >= SOAK_TARGET_CYCLES}
+
+
+def _read_soak(state: Path) -> dict | None:
+    try:
+        return json.loads((state / SOAK_FILE).read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        raise LabError(f"cannot read {state / SOAK_FILE}: {e}") from e
+
+
+def _boots_records(state: Path) -> list[dict[str, str]]:
+    try:
+        return parse_boots((state / BOOTS_LOG).read_text())
+    except OSError:
+        return []
+
+
+def _systemctl(*args: str) -> None:
+    if subprocess.run(["systemctl", *args]).returncode != 0:
+        raise LabError(f"systemctl {' '.join(args)} failed")
+
+
+def _this_boot_id() -> str:
+    try:
+        return BOOT_ID_PATH.read_text().strip().replace("-", "")
+    except OSError as e:
+        raise LabError(f"cannot read {BOOT_ID_PATH}: {e}") from e
+
+
+def soak_start() -> int:
+    require_root("soak start")
+    state_file = STATE_DIR / SOAK_FILE
+    start = {"start_boot": _this_boot_id(),
+             "start_line": len(_boots_records(STATE_DIR))}
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(start) + "\n")
+        (STATE_DIR / SOAK_CYCLES_LOG).write_text("")
+    except OSError as e:
+        raise LabError(f"cannot write soak state in {STATE_DIR}: {e}") from e
+    try:
+        # state first: enabling --now fires the overdue OnBootSec timer at once
+        _systemctl("enable", "--now", SOAK_TIMER)
+    except LabError:
+        state_file.unlink(missing_ok=True)
+        raise
+    print(f"soak started on boot {start['start_boot'][:8]}; one {SOAK_WINDOW_S} s "
+          f"window about every hour, goal {SOAK_TARGET_CYCLES} cycles "
+          "(erhai-gpu-lab soak status)")
+    return 0
+
+
+def soak_stop() -> int:
+    require_root("soak stop")
+    _systemctl("disable", "--now", SOAK_TIMER)
+    print(f"soak timer disabled; results kept in {STATE_DIR}")
+    return 0
+
+
+def soak_tick() -> int:
+    """One cycle-counting window, run by erhai-gpu-lab-soak.service."""
+    if _read_soak(STATE_DIR) is None:
+        return 0
+    require_root("soak tick")
+    res = subprocess.run([str(helper("gpu-checks.sh")), "cycles", str(SOAK_WINDOW_S)],
+                         capture_output=True, text=True, errors="replace")
+    m = _CYCLES_LINE_RE.search(res.stdout)
+    if res.returncode != 0 or not m:
+        detail = (res.stderr or res.stdout).strip() or f"exit {res.returncode}"
+        why = "window failed" if res.returncode != 0 else "no cycles= line in output"
+        print(f"erhai-lab: soak tick: {why}, not recorded: {detail}", file=sys.stderr)
+        return 1
+    with open(STATE_DIR / SOAK_CYCLES_LOG, "a") as f:
+        f.write(f"boot={_this_boot_id()} secs={SOAK_WINDOW_S} cycles={m.group(1)}\n")
+    return 0
+
+
+def soak_status() -> int:
+    soak = _read_soak(STATE_DIR)
+    if soak is None:
+        print("no soak in progress (erhai-gpu-lab soak start)")
+        return 0
+    boots = _boots_records(STATE_DIR)
+    start_line, start_boot = soak.get("start_line", 0), soak.get("start_boot")
+    kernel_logs = {bid: _journal("-k", "-b", bid) or ""
+                   for bid in soak_boot_ids(boots, start_line, start_boot)}
+    try:
+        cycles_log = (STATE_DIR / SOAK_CYCLES_LOG).read_text()
+    except OSError:
+        cycles_log = ""
+    s = soak_summary(cycles_log, boots, start_line, kernel_logs, start_boot)
+    print(f"hours: {s['hours']:.2f}")
+    print(f"cycles: {s['cycles']} (>= {SOAK_TARGET_CYCLES}: "
+          f"{'yes' if s['cycles_ok'] else 'no'})")
+    print(f"boots: {s['boots']}")
+    for bid, kind in s["resets"]:
+        print(f"reset {bid[:8]} {kind}")
+    for bid, line in s["wedge_lines"]:
+        print(f"wedge {bid[:8]} {line}")
+    return 0
+
+
+def cmd_soak(args: argparse.Namespace) -> int:
+    return {"start": soak_start, "stop": soak_stop, "tick": soak_tick,
+            "status": soak_status}[args.soak_cmd]()
+
+
 # ------------------------------------------------------------------- cli ---
 
 def require_root(what: str) -> None:
@@ -833,6 +1001,13 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--minutes", type=int, default=30,
                    help="sampling duration (default: 30; one sample every 10 s)")
     w.set_defaults(func=cmd_power)
+    k = sub.add_parser("soak", help="g2 runtime-PM cycle soak across reboots")
+    ksub = k.add_subparsers(dest="soak_cmd", required=True)
+    ksub.add_parser("start", help="begin a soak and enable its timer (root)")
+    ksub.add_parser("stop", help="disable the soak timer, keep the results (root)")
+    ksub.add_parser("tick", help="run one cycle window (root, soak service)")
+    ksub.add_parser("status", help="hours, cycles, boots, resets and wedge lines")
+    k.set_defaults(func=cmd_soak)
     return p
 
 
