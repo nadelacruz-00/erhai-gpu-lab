@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 22:56:30 +0800
+Subject: [PATCH] iommu/arm-smmu-qcom: keep the SM8750 MDSS on an identity
+ domain
+
+The MDSS on SM8750 is still scanning out the bootloader's splash
+framebuffer when apps_smmu probes. Without an identity default domain
+it is moved to an empty translation context and faults (SID 0x800,
+iova 0xfc8xxxxx), and the panel goes dark before msm takes over.
+Add it to qcom_smmu_client_of_match like the other MDSS generations.
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+index 795e8ec7e8f..5c641f85095 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -426,6 +426,7 @@ static const struct of_device_id qcom_smmu_client_of_match[] __maybe_unused = {
+ 	{ .compatible = "qcom,sm8150-mdss" },
+ 	{ .compatible = "qcom,sm8250-mdss" },
+ 	{ .compatible = "qcom,sm8450-mdss" },
++	{ .compatible = "qcom,sm8750-mdss" },
+ 	{ .compatible = "qcom,x1e80100-mdss" },
+ 	{ }
+ };

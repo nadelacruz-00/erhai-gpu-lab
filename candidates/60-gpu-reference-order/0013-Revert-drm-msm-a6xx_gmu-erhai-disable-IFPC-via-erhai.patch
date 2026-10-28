@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 15:21:29 +0800
+Subject: [PATCH] Revert "drm/msm/a6xx_gmu: erhai: disable IFPC via
+ erhai_no_ifpc param (fix silent POR on GPU idle)"
+
+This reverts commit 9c3aa45c45fb.
+
+The silent resets on GPU idle the original blamed on IFPC followed from the
+mis-sized device tree windows (the RSCC at gpu+0x50000 outside the GPU
+node's 0x40000 kgsl_3d0_reg_memory window, and the GX GDSC left unbound by
+9c9eefdef1 because the gxclkctl node mapped only 4 KiB), which left GX
+collapse and the RSCC handshake unmanaged; with the windows fixed the
+catalog's IFPC idle level is used again.
+
+The pre-revert text also carried an older MODULE_PARM_DESC(erhai_no_ifpc)
+line with no matching parameter; it is dropped rather than restored.
+
+Tested on a OnePlus Pad 3 (SM8750): <to be filled after the g0 rung>
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 32 ---------------------------
+ 1 file changed, 32 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 273baf303a9..baf99dc9bcc 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -19,17 +19,6 @@
+ #include "msm_gpu_trace.h"
+ #include "msm_mmu.h"
+ 
+-/* erhai: disable IFPC so the GMU FW never autonomously power-collapses GX.
+- * Default ON (owner decision 2026-09-12, fix A) — the autonomous IFPC/GX
+- * collapse is the suspected silent-POR trigger. Set 0 via
+- * /sys/module/msm/parameters/erhai_no_ifpc to re-enable IFPC for A/B.
+- * When set: idle_level is forced to ACTIVE and the GMU_OOB_PERFCOUNTER_SET
+- * vote is held after each resume (same mechanism a6xx_gmu_sysprof_setup uses
+- * to block IFPC for sysprof) so the GMU FW never enters IFPC. */
+-bool erhai_no_ifpc = true;
+-module_param(erhai_no_ifpc, bool, 0644);
+-MODULE_PARM_DESC(erhai_no_ifpc, "erhai: disable IFPC (idle_level=ACTIVE + hold GMU_OOB_PERFCOUNTER vote). Default 1 — suspected silent-POR fix.");
+-
+ static void a6xx_gmu_fault(struct a6xx_gmu *gmu)
+ {
+ 	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
+@@ -1402,23 +1391,6 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ 	/* Set the GPU to the current freq */
+ 	a6xx_gmu_set_initial_freq(gpu, gmu);
+ 
+-	/*
+-	 * erhai fix-A: with the disable-IFPC param, hold the perfcounter OOB
+-	 * vote so the GMU FW never autonomously enters IFPC (GX power
+-	 * collapse) while idle — same mechanism a6xx_gmu_sysprof_setup uses
+-	 * for sysprof ("Perfcounter select register values are lost during
+-	 * IFPC collapse ... use the currently unused perfcounter oob vote to
+-	 * block IFPC"). The vote is cleared in a6xx_gmu_shutdown and
+-	 * re-asserted here on every resume.
+-	 */
+-	if (erhai_no_ifpc) {
+-		if (!test_and_set_bit(GMU_STATUS_OOB_PERF_SET, &gmu->status)) {
+-			ret = a6xx_gmu_set_oob(gmu, GMU_OOB_PERFCOUNTER_SET);
+-			if (ret)
+-				clear_bit(GMU_STATUS_OOB_PERF_SET, &gmu->status);
+-		}
+-	}
+-
+ 	return 0;
+ 
+ disable_irq:
+@@ -2341,10 +2313,6 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
+ 	gmu->idle_level = (adreno_gpu->info->quirks & ADRENO_QUIRK_IFPC) ?
+ 		GMU_IDLE_STATE_IFPC : GMU_IDLE_STATE_ACTIVE;
+ 
+-	/* erhai: force ACTIVE idle (no IFPC) when the disable-IFPC param is on */
+-	if (erhai_no_ifpc)
+-		gmu->idle_level = GMU_IDLE_STATE_ACTIVE;
+-
+ 	pm_runtime_enable(gmu->dev);
+ 
+ 	/* Get the list of clocks */
