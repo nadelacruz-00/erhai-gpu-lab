@@ -8,11 +8,13 @@ from labtool import REPO_ROOT
 
 
 class SetupSh(unittest.TestCase):
-    def test_setup_installs_exactly_the_six_packages(self):
+    def test_setup_installs_exactly_the_five_packages(self):
         text = (REPO_ROOT / "tablet" / "setup.sh").read_text()
-        for p in ["trace-cmd", "mesa-utils", "vulkan-tools", "devmem2",
+        for p in ["trace-cmd", "mesa-utils", "vulkan-tools",
                   "libegl-dev", "libgles-dev"]:
             self.assertIn(p, text)
+        # devmem2 reset the tablet reading the firewalled qfprom (2026-10-28)
+        self.assertNotIn("devmem2", text)
         self.assertIn("dpkg -s", text)  # the idempotence check
 
     def test_gpu_hang_builds(self):

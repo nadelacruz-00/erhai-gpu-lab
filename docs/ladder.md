@@ -9,7 +9,7 @@ Instruments:
 - `tablet/gpu-checks.sh cycles <seconds>` counts rpm suspend/resume cycles of `3d00000.gpu` over a window.
 - `tools/gpu-hang/gpu-hang [--iterations N]` is the only inducer (EGL/GLES2 surfaceless; fragment shader whose loop bound `u_iters` is `N`, default `0xFFFFFFFF`). `N` is the shader loop bound, not a repeat count. `--iterations 1` is the setup/smoke test (exit 0, harmless). The default count is the hang inducer and is used ONLY in g1 control and g1 recover. Exit 0 completed, 2 setup failure, 3 reset detected, 4 timeout.
 - `tools/export-patches.sh <kernel-dir> <branch> <candidate> [--prefix N]` exports the first N commits of the stack.
-- `tablet/setup.sh` installs trace-cmd, mesa-utils, vulkan-tools, devmem2, libegl-dev, libgles-dev.
+- `tablet/setup.sh` installs trace-cmd, mesa-utils, vulkan-tools, libegl-dev, libgles-dev.
 
 Preconditions for g0 on the candidate, g1 and g2: `/etc/erhai/gpu-pin.conf` has `MODE=once` (pin released). With `MODE=always` the checker reports `pin-released` as INFO and `runtime-suspends` as INFO (when `power/control=on`), which is not a proof. The one exception is the explicit `MODE=always` run in g1 recover.
 
@@ -48,7 +48,7 @@ Applies to every rung and to the Success Criteria.
 
 | Rung | What | Pass |
 |---|---|---|
-| g-1 fuse | On the current kernel, before any build: `sudo devmem2 0x221c8138 h` (qfprom `0x221c8000 + 0x138`, 9 bits from bit 0, `& 0x1ff`; D4: devmem2, g0 cross-checks against the qfprom cell). Record raw and masked value. | Value recorded. If it is not one of `0, 252, 242, 232, 221, 190`, patch 4 gets one extra commit mapping that value to a bin with the OPP mask argued from Qualcomm's table, and the value goes into the TheMojoMan issue; otherwise the adreno driver would refuse the bin and the GPU would not probe on g0. |
+| g-1 fuse | **Never read the fuse through `/dev/mem` (`devmem2`): on this SoC the qfprom region is firewalled and the read reset the tablet on 2026-10-28.** The running package kernel has no qfprom nvmem node, so the value is read on the candidate (which adds `efuse@221c8000` with `gpu-speed-bin@138`): `sudo tablet/gpu-checks.sh g0` prints `INFO fuse speed_bin@0x138=<value>`, and the adreno driver logs the bin it picked. Mask `& 0x1ff` (9 bits from bit 0). | Value recorded at g0. If it is not one of `0, 252, 242, 232, 221, 190`, the GPU does not probe on the candidate (g0 `probe`/`renderer` FAIL, desktop on llvmpipe): reboot to the package kernel and add one commit to patch 4 mapping that value to a bin with the OPP mask argued from Qualcomm's table; report the value in the TheMojoMan issue. |
 | g0 control | Same `sudo tablet/gpu-checks.sh g0` on the package kernel first (D9 control row). Needs `MODE=once`. | Preserved behaviors (1)-(5) below all PASS, `-19` present, `genpd:1` absent. Recorded in Results before the candidate's g0. This proves the checker before it judges the candidate. |
 | g0 boot | Boot `60-gpu-reference` (needs `MODE=once`, pin released); run `sudo tablet/gpu-checks.sh g0` | No FAIL. Preserved (D9): (1) `probe`: GPU probes without `erhai_gmu_enable`, `/dev/dri/renderD128` driver `msm`, no `Couldn't power up the GPU` line; (2) `zap`: auth OK, no `pas_init_image`/zap error; (3) `renderer`: `eglinfo -B` reports `FD830`; (4) `pin-released`: `erhai-gpu-pin-once` reaches `RELEASED` (`/run/erhai-gpu-pin-once.state`, wait <= SETTLE+TIMEOUT); (5) `shell-on-gpu`: gnome-shell maps freedreno/`libgallium`, not `llvmpipe`/`swrast`. Intentional changes: `no-minus19` (no `-19` at boot); `gmu-genpd` (a `*.gmu` device, `3d37000.gmu` today, has `genpd:0` and `genpd:1`; the line names it); `runtime-suspends` (`runtime_status` of `3d00000.gpu` reaches `suspended` at least once in 60 s idle with `control=auto`). Also: `gxclkctl-bound` (`3d64000.clock-controller/driver` -> `gxclkctl-kaanapali`); `gx-gdsc-summary` (`sudo cat /sys/kernel/debug/pm_genpd/pm_genpd_summary` lists `gx_clkctl_gx_gdsc` with the GMU); `no-oops`; `no-gx-warn` (the patch-7 `dev_warn` is absent); `fuse` (speed_bin and enabled OPPs via `available_frequencies`); evidence paths `pstore`, `hung-task`, `dpm-watchdog` (`grep DPM_WATCHDOG /proc/config.gz` = y); `pon-reason` (D3); `suspend-hang-gpu`, `dmesg-readable` (a dmesg that cannot be read fails the absence checks). |
 | g1 control | On the current `lab-43` kernel (or the package kernel), `control=auto`, `MODE=once`: run `tools/gpu-hang/gpu-hang` with the default count, once. **WARNING: on a kernel whose recovery is broken the screen will freeze and a hard reset (power-key hold) is needed. Keep an SSH session open and capture `journalctl -k` before resetting.** It may also recover cleanly; record which. Record dmesg. | Outcome recorded either way: infinite loop (today's freeze) or clean recovery. If the control recovers, g1 on the candidate shows only "the CP-hang path still works" and P1a's proof moves to the first natural wedge in g2/g4. |
@@ -108,12 +108,12 @@ Fill from the tablet. Paste command output verbatim.
 |---|---|
 | Kernel | |
 | Date | |
-| Raw (`sudo devmem2 0x221c8138 h`) | |
+| Raw (`INFO fuse` line from g0 on the candidate) | |
 | Masked (`& 0x1ff`) | |
 | In `0, 252, 242, 232, 221, 190`? | |
 | Action | |
 
-Command: `sudo devmem2 0x221c8138 h`. The DT cell is `gpu-speed-bin@138 { reg = <0x138 0x2>; bits = <0 9>; }` (nvmem `bits = <offset nbits>`: 9 bits from bit 0), so `speed_bin = value & 0x1ff`. If not in the table, go back to Task 3 step 10 for the mapping commit.
+Read on the candidate only (never `devmem2`): the `INFO fuse` line of `sudo tablet/gpu-checks.sh g0`. The DT cell is `gpu-speed-bin@138 { reg = <0x138 0x2>; bits = <0 9>; }` (nvmem `bits = <offset nbits>`: 9 bits from bit 0), so `speed_bin = value & 0x1ff`. If not in the table, go back to Task 3 step 10 for the mapping commit.
 
 ### PON reason probe (Task 9)
 

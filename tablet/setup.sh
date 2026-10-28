@@ -5,7 +5,7 @@
 # are missing and neither root nor passwordless sudo is available.
 set -u
 
-PKGS=(trace-cmd mesa-utils vulkan-tools devmem2 libegl-dev libgles-dev)
+PKGS=(trace-cmd mesa-utils vulkan-tools libegl-dev libgles-dev)
 missing=()
 for p in "${PKGS[@]}"; do
     dpkg -s "$p" >/dev/null 2>&1 && echo "$p already installed" || missing+=("$p")
