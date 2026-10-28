@@ -530,10 +530,10 @@ def boot_run(state: Path, ident: dict, prev_tail: str | None, cur_journal: str,
     return f"ran {q['label']} -> {out} ({verdict})"
 
 
-def _journal(*args: str) -> str | None:
+def _journal(*args: str, fmt: str = "cat") -> str | None:
     """journalctl stdout, or None if it fails or prints nothing."""
     try:
-        r = subprocess.run(["journalctl", *args, "-o", "cat"], capture_output=True,
+        r = subprocess.run(["journalctl", *args, "-o", fmt], capture_output=True,
                            text=True, errors="replace")
     except OSError:
         return None
@@ -999,6 +999,42 @@ def _systemctl(*args: str) -> None:
         raise LabError(f"systemctl {' '.join(args)} failed")
 
 
+PROC_UPTIME = Path("/proc/uptime")
+_MONO_LINE_RE = re.compile(r"^\[\s*(\d+(?:\.\d+)?)\]\s+\S+\s+[^:]*:\s?(.*)$")
+
+
+def this_uptime() -> float:
+    """Seconds since this boot (the kernel's monotonic log clock)."""
+    try:
+        return float(PROC_UPTIME.read_text().split()[0])
+    except (OSError, ValueError, IndexError) as e:
+        raise LabError(f"cannot read {PROC_UPTIME}: {e}") from e
+
+
+def messages_since(mono_log: str, since: float) -> str:
+    """`journalctl -o short-monotonic` text -> the messages (as `-o cat` would
+    print them) logged at or after `since` seconds of uptime."""
+    out = []
+    for line in mono_log.splitlines():
+        m = _MONO_LINE_RE.match(line)
+        if m and float(m.group(1)) >= since:
+            out.append(m.group(2))
+    return "\n".join(out) + ("\n" if out else "")
+
+
+def soak_kernel_logs(soak: dict, ids: list[str]) -> dict[str, str]:
+    """Kernel log per soak boot. The start boot only counts from `soak start`
+    on, so rungs run earlier in that boot (g1's induced hangs) are not wedges."""
+    logs = {}
+    since = soak.get("start_uptime")
+    for bid in ids:
+        if bid == soak.get("start_boot") and isinstance(since, (int, float)):
+            logs[bid] = messages_since(_journal("-k", "-b", bid, fmt="short-monotonic") or "", since)
+        else:
+            logs[bid] = _journal("-k", "-b", bid) or ""
+    return logs
+
+
 def soak_start() -> int:
     require_root("soak start")
     state_file = STATE_DIR / SOAK_FILE
@@ -1006,7 +1042,8 @@ def soak_start() -> int:
     if old is not None and _soak_window(old)[2] is None:
         raise LabError("soak already running; soak stop first")
     start = {"start_boot": this_boot_id(),
-             "start_line": len(_boots_records(STATE_DIR))}
+             "start_line": len(_boots_records(STATE_DIR)),
+             "start_uptime": this_uptime()}
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         _write_json(state_file, start)
@@ -1081,8 +1118,7 @@ def soak_status() -> int:
         return 0
     boots = _boots_records(STATE_DIR)
     start_line, start_boot, stop_line = _soak_window(soak)
-    kernel_logs = {bid: _journal("-k", "-b", bid) or ""
-                   for bid in soak_boot_ids(boots, start_line, start_boot, stop_line)}
+    kernel_logs = soak_kernel_logs(soak, soak_boot_ids(boots, start_line, start_boot, stop_line))
     try:
         cycles_log = (STATE_DIR / SOAK_CYCLES_LOG).read_text()
     except OSError:
@@ -1223,7 +1259,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         except LabError:
             soak = None     # render_report shows the unreadable soak.json itself
         ids = soak_boot_ids(_boots_records(STATE_DIR), *_soak_window(soak)) if soak else []
-        kernel_logs = {bid: _journal("-k", "-b", bid) or "" for bid in ids}
+        kernel_logs = soak_kernel_logs(soak, ids) if soak else {}
     text = render_report(STATE_DIR, kernel_logs)
     if args.out:
         try:

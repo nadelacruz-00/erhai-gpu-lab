@@ -116,8 +116,10 @@ class StateTest(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.state = Path(self._tmp.name)
         (self.state / "boot_id").write_text("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n")
+        (self.state / "uptime").write_text("600.25 4000.00\n")
         for p in (mock.patch.object(lab, "STATE_DIR", self.state),
-                  mock.patch.object(lab, "BOOT_ID_PATH", self.state / "boot_id")):
+                  mock.patch.object(lab, "BOOT_ID_PATH", self.state / "boot_id"),
+                  mock.patch.object(lab, "PROC_UPTIME", self.state / "uptime")):
             p.start()
             self.addCleanup(p.stop)
 
@@ -200,7 +202,7 @@ class StartStopStatusTest(StateTest):
             rc, _, _ = self.run_cmd("start")
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads((self.state / "soak.json").read_text()),
-                         {"start_boot": B, "start_line": 2})
+                         {"start_boot": B, "start_line": 2, "start_uptime": 600.25})
         self.assertEqual((self.state / "soak-cycles.log").read_text(), "")
         run.assert_called_once_with(
             ["systemctl", "enable", "--now", "erhai-gpu-lab-soak.timer"])
@@ -211,7 +213,7 @@ class StartStopStatusTest(StateTest):
                                return_value=subprocess.CompletedProcess([], 0)):
             self.run_cmd("start")
         self.assertEqual(json.loads((self.state / "soak.json").read_text()),
-                         {"start_boot": B, "start_line": 0})
+                         {"start_boot": B, "start_line": 0, "start_uptime": 600.25})
 
     def test_start_refuses_running_soak(self):
         running = json.dumps({"start_boot": A, "start_line": 1}) + "\n"
@@ -237,7 +239,7 @@ class StartStopStatusTest(StateTest):
             rc, _, _ = self.run_cmd("start")
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads((self.state / "soak.json").read_text()),
-                         {"start_boot": B, "start_line": 1})
+                         {"start_boot": B, "start_line": 1, "start_uptime": 600.25})
         self.assertEqual((self.state / "soak-cycles.log").read_text(), "")
 
     def test_start_systemctl_failure_keeps_cycles_log(self):
@@ -379,3 +381,42 @@ class UnitFilesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StartBootTrimTest(unittest.TestCase):
+    """Rungs run before `soak start` in the same boot (g1's induced hangs) are
+    not soak wedges; later boots count whole."""
+
+    MONO = ("[  120.000001] tabby-boi kernel: msm_dpu ae01000.display-controller: [drm:recover_worker] *ERROR* 44050001: hangcheck recover!\n"
+            "[  599.999999] tabby-boi kernel: before the start\n"
+            "[  600.250000] tabby-boi kernel: at the start\n"
+            "[ 4100.5] tabby-boi kernel: platform 3d37000.gmu: [drm:a6xx_gmu_set_oob] *ERROR* Timeout waiting for GMU OOB set GPU_SET: 0x0\n")
+
+    def test_messages_since_keeps_only_later_lines(self):
+        out = lab.messages_since(self.MONO, 600.25)
+        self.assertEqual(out.splitlines(), [
+            "at the start",
+            "platform 3d37000.gmu: [drm:a6xx_gmu_set_oob] *ERROR* Timeout waiting for GMU OOB set GPU_SET: 0x0"])
+
+    def test_messages_since_nothing_later(self):
+        self.assertEqual(lab.messages_since(self.MONO, 9999), "")
+
+    def test_soak_kernel_logs_trims_only_the_start_boot(self):
+        calls = []
+
+        def fake(*args, fmt="cat"):
+            calls.append((args, fmt))
+            return self.MONO if fmt == "short-monotonic" else "whole log of " + args[-1]
+        soak = {"start_boot": A, "start_line": 1, "start_uptime": 600.25}
+        with mock.patch.object(lab, "_journal", side_effect=fake):
+            logs = lab.soak_kernel_logs(soak, [A, B])
+        self.assertNotIn("hangcheck recover!", logs[A])
+        self.assertIn("GPU_SET", logs[A])
+        self.assertEqual(logs[B], "whole log of " + B)
+        self.assertEqual(calls, [(("-k", "-b", A), "short-monotonic"), (("-k", "-b", B), "cat")])
+
+    def test_soak_without_start_uptime_reads_whole_logs(self):
+        with mock.patch.object(lab, "_journal", return_value="x\n") as j:
+            logs = lab.soak_kernel_logs({"start_boot": A, "start_line": 1}, [A])
+        self.assertEqual(logs, {A: "x\n"})
+        j.assert_called_once_with("-k", "-b", A)
