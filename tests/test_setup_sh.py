@@ -3,9 +3,11 @@
 
 import os
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
-from labtool import REPO_ROOT
+from labtool import REPO_ROOT, lab
 
 IGT = REPO_ROOT / "tools" / "igt-recovery" / "igt-recovery"
 
@@ -40,9 +42,27 @@ class SetupSh(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("needs root", r.stderr)
 
+    def test_igt_dir_defaults_to_state(self):
+        self.assertIn("IGT_DIR=${IGT_DIR:-/var/lib/erhai-gpu/igt}\n", IGT.read_text())
+
     def test_igt_recovery_parses(self):
         r = subprocess.run(["bash", "-n", str(IGT)], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class Helper(unittest.TestCase):
+    def test_helper_missing_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = lab.LIB_DIR
+            lab.LIB_DIR = Path(tmp)
+            try:
+                with self.assertRaises(lab.LabError) as cm:
+                    lab.helper("setup.sh")
+                self.assertIn("not installed", str(cm.exception))
+                (Path(tmp) / "setup.sh").write_text("")
+                self.assertEqual(lab.helper("setup.sh"), Path(tmp) / "setup.sh")
+            finally:
+                lab.LIB_DIR = old
 
 
 if __name__ == "__main__":

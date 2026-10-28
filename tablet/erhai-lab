@@ -8,6 +8,8 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
                       UKI/modules kernelrelease, install it beside the package
                       kernel (/boot/<kver>.efi + /usr/lib/modules/<kver>/)
   whoami              print the booted kernel's lab candidate, build and stack
+  setup               (root) install the g1 tools via the installed setup.sh and
+                      build the pinned IGT msm_recovery under /var/lib/erhai-gpu/igt
 
 Rungs, experiments and their numbers are described in docs/ladder.md.
 """
@@ -30,6 +32,9 @@ REPO = "nadelacruz-00/erhai-gpu-lab"
 BOOT_DIR = Path("/boot")
 MODULES_DIR = Path("/usr/lib/modules")
 PROC_CMDLINE = Path("/proc/cmdline")
+LIB_DIR = Path("/usr/local/lib/erhai-gpu-lab")
+STATE_DIR = Path("/var/lib/erhai-gpu")
+PIN_CONF = Path("/etc/erhai/gpu-pin.conf")
 
 
 class LabError(Exception):
@@ -235,6 +240,28 @@ def cmd_whoami(args: argparse.Namespace) -> int:
     return 0
 
 
+# ----------------------------------------------------------------- setup ---
+
+def helper(name: str) -> Path:
+    """Path of an installed helper under LIB_DIR."""
+    path = LIB_DIR / name
+    if not path.is_file():
+        raise LabError(f"{name} not installed; run sudo tablet/install.sh")
+    return path
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    require_root("setup")
+    steps = [("setup.sh", [str(helper("setup.sh"))], None),
+             ("igt-recovery build", [str(helper("igt-recovery")), "build"],
+              {"IGT_DIR": str(STATE_DIR / "igt")})]
+    for step, cmd, extra_env in steps:
+        env = {**os.environ, **extra_env} if extra_env else None
+        if subprocess.run(cmd, env=env).returncode != 0:
+            raise LabError(f"setup step failed: {step}")
+    return 0
+
+
 # ------------------------------------------------------------------- cli ---
 
 def require_root(what: str) -> None:
@@ -256,6 +283,8 @@ def build_parser() -> argparse.ArgumentParser:
     f.set_defaults(func=cmd_fetch)
 
     sub.add_parser("whoami", help="which lab candidate is booted").set_defaults(func=cmd_whoami)
+    sub.add_parser("setup", help="install g1 tools and build IGT (root)"
+                   ).set_defaults(func=cmd_setup)
     return p
 
 

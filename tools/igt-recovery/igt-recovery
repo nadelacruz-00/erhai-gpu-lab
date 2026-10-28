@@ -4,7 +4,9 @@
 # g1 hang source: upstream IGT msm_recovery (igt-gpu-tools), pinned, built
 # once on the tablet. No hang code of our own.
 #
-#   tools/igt-recovery/igt-recovery build              clone + build (no root)
+#   tools/igt-recovery/igt-recovery build              clone + build into $IGT_DIR
+#                                                      (default /var/lib/erhai-gpu/igt;
+#                                                      `sudo erhai-gpu-lab setup` does this)
 #   sudo tools/igt-recovery/igt-recovery run [SUBTEST] one run, kernel log saved
 #
 # SUBTEST is gpu-fault (default: hw hang detection, one bad submit among 16,
@@ -17,7 +19,7 @@ IGT_TAG=v2.6
 IGT_COMMIT=916c79cfb7675ca01607dcd821f8c49d4f633a6f
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-IGT_DIR=${IGT_DIR:-$HERE/igt}
+IGT_DIR=${IGT_DIR:-/var/lib/erhai-gpu/igt}
 BIN=$IGT_DIR/build/tests/msm/msm_recovery
 EVIDENCE=${EVIDENCE:-/var/lib/erhai-gpu}
 

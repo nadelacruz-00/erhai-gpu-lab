@@ -15,6 +15,13 @@ class InstallSh(unittest.TestCase):
         self.assertIn("/var/lib/erhai-gpu", self.text)
         self.assertIn('"$HERE/erhai-lab"', self.text)  # in-repo filename unchanged
 
+    def test_install_copies_helpers(self):
+        for needle in ["/usr/local/lib/erhai-gpu-lab", "gpu-checks.sh", "igt-recovery",
+                       "setup.sh", "erhai-gpu-lab-boot.service",
+                       "systemctl enable erhai-gpu-lab-boot.service"]:
+            self.assertIn(needle, self.text)
+        self.assertNotIn("enable erhai-gpu-lab-soak.timer", self.text)
+
     def test_no_charging_lab_paths_or_wording(self):
         self.assertNotIn("charging", self.text.lower())
         self.assertNotIn("/usr/local/sbin/erhai-lab\n", self.text)
