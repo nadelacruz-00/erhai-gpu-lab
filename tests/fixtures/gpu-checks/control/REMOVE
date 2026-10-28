@@ -1,0 +1,2 @@
+root/sys/devices/platform/soc@0/3d37000.gmu/genpd:1:3d37000.gmu
+root/sys/devices/platform/soc@0/3d64000.clock-controller/driver

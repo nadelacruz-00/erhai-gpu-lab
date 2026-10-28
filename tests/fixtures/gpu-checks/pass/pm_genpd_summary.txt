@@ -1,0 +1,3 @@
+domain status
+gx_clkctl_gx_gdsc on
+gx_clkctl_gpu_gx_gdsc on
