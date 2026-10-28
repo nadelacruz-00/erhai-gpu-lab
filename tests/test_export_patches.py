@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """tools/export-patches.sh: regenerate a candidate's patches from BASE_SHA..branch."""
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -94,6 +95,43 @@ class ExportPatches(unittest.TestCase):
         self.run_export("work")
         text = (self.cand / "0001-a.patch").read_text()
         self.assertIn("From: Fixture Author <fixture@example.invalid>", text)
+
+    def test_patches_apply_with_p1_despite_noprefix(self):
+        git(self.kernel, "config", "diff.noprefix", "true")
+        git(self.kernel, "config", "diff.mnemonicPrefix", "true")
+        r = self.run_export("work")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = (self.cand / "0001-a.patch").read_text()
+        self.assertIn("--- a/f", text)
+        self.assertIn("+++ b/f", text)
+        tree = Path(self._tmp.name) / "tree"
+        tree.mkdir()
+        (tree / "f").write_text("base\n")
+        for p in sorted(self.cand.glob("*.patch")):
+            subprocess.run(["patch", "-p1", "-i", str(p)], cwd=tree, check=True,
+                           capture_output=True)
+        self.assertEqual((tree / "f").read_text(), "c\n")
+
+    def test_format_patch_failure_leaves_candidate_intact(self):
+        self.assertEqual(self.run_export("work").returncode, 0)
+        before = {p.name: p.read_text() for p in self.cand.iterdir()}
+        shim = Path(self._tmp.name) / "shim"
+        shim.mkdir()
+        real = shutil.which("git")
+        (shim / "git").write_text(
+            '#!/bin/sh\nfor a in "$@"; do [ "$a" = format-patch ] && exit 1; done\n'
+            f'exec {real} "$@"\n')
+        (shim / "git").chmod(0o755)
+        env = {**os.environ, "PATH": f"{shim}:{os.environ['PATH']}"}
+        r = subprocess.run(
+            ["bash", str(self.lab / "tools" / "export-patches.sh"),
+             str(self.kernel), "work", "cand", "--prefix", "1"],
+            capture_output=True, text=True, env=env)
+        self.assertNotEqual(r.returncode, 0)
+        after = {p.name: p.read_text() for p in self.cand.iterdir()}
+        self.assertEqual(before, after)
+        self.assertEqual([p.name for p in (self.lab / "candidates").iterdir()
+                          if p.name.startswith(".export")], [])
 
 
 if __name__ == "__main__":

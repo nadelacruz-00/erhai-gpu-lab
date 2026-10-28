@@ -38,7 +38,15 @@ fi
 
 OUT="$ROOT/candidates/$CAND"
 mkdir -p "$OUT"
+# Stage next to the destination (same filesystem), then swap in, so a failure
+# leaves the existing patches and STACK intact.
+TMP=$(mktemp -d "$ROOT/candidates/.export.XXXXXX")
+trap 'rm -rf "$TMP" "$TMP.list"' EXIT
+# Fixed prefixes: user diff.noprefix / diff.mnemonicPrefix must not change what `patch -p1` sees.
+git -C "$K" -c diff.noprefix=false -c diff.mnemonicPrefix=false format-patch \
+    --src-prefix=a/ --dst-prefix=b/ --zero-commit --no-signature --no-numbered \
+    -o "$TMP/" "$BASE..$END" > "$TMP.list"
+git -C "$K" rev-parse "$END" > "$TMP/STACK"
 rm -f "$OUT"/*.patch
-git -C "$K" format-patch --zero-commit --no-signature --no-numbered \
-    -o "$OUT/" "$BASE..$END"
-git -C "$K" rev-parse "$END" > "$OUT/STACK"
+mv "$TMP"/* "$OUT"/
+sed "s|^$TMP/|$OUT/|" "$TMP.list"
