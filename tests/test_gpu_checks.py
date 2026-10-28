@@ -118,6 +118,25 @@ class GpuChecks(unittest.TestCase):
         r = run_checks("pass", env={"GENPD_SUMMARY_FILE": "", "SYSROOT": "/nonexistent-root"})
         self.assertRegex(r.stdout, r"(?m)^FAIL gx-gdsc-summary .*(no sudo|unreadable)")
 
+    def test_empty_dmesg_fails_absence_checks(self):
+        for env in ({"DMESG_CMD": "true"}, {"DMESG_CMD": "false"}):
+            r = run_checks("pass", env=env)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertRegex(r.stdout, r"(?m)^FAIL dmesg-readable dmesg unavailable")
+            for cid in ["no-oops", "no-minus19", "no-gx-warn", "zap", "suspend-hang-gpu"]:
+                self.assertRegex(r.stdout, rf"(?m)^FAIL {cid} dmesg unavailable", msg=cid)
+
+    def test_cycles_missing_report_fails(self):
+        r = run_cycles("/nonexistent/report")
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("cycles=", r.stdout)
+        self.assertIn("unreadable", r.stderr)
+
+    def test_cycles_no_events_prints_zeros(self):
+        with tempfile.NamedTemporaryFile("w") as f:
+            r = run_cycles(f.name)
+        self.assertIn("cycles=0 suspend=0 resume=0", r.stdout)
+
     def test_cycles_parses_trace_report(self):
         r = run_cycles(FIX / "trace" / "report.txt")
         self.assertEqual(r.returncode, 0, r.stderr)

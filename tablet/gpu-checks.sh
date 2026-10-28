@@ -33,9 +33,19 @@ verdict() { # id ok-value fail-value command...
 }
 
 DMESG=
-load_dmesg() { DMESG=$(bash -c "$DMESG_CMD" 2>/dev/null); }
+DMESG_OK=1
+load_dmesg() {
+    local rc=0
+    DMESG=$(bash -c "$DMESG_CMD" 2>/dev/null) || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        DMESG_OK=0; report FAIL dmesg-readable "dmesg unavailable (DMESG_CMD exit $rc)"
+    elif [ -z "$DMESG" ]; then
+        DMESG_OK=0; report FAIL dmesg-readable "dmesg unavailable (empty output)"
+    fi
+}
 dm_has() { grep -Eq -- "$1" <<<"$DMESG"; }
 dm_lacks() { ! dm_has "$1"; }
+dmesg_needed() { [ "$DMESG_OK" = 1 ] && return 1; report FAIL "$1" "dmesg unavailable"; return 0; }
 link_target() { local t; t=$(readlink "$1" 2>/dev/null) && basename "$t"; }
 
 check_gxclkctl_bound() {
@@ -61,13 +71,16 @@ check_gx_gdsc() {
         grep -q gx_clkctl_gx_gdsc <<<"$s"
 }
 check_no_oops() {
+    dmesg_needed no-oops && return
     local l; l=$(grep -Em1 'Oops|Call [Tt]race' <<<"$DMESG")
     verdict no-oops none "$l" [ -z "$l" ]
 }
 check_no_minus19() {
+    dmesg_needed no-minus19 && return
     verdict no-minus19 none "Couldn't power up the GPU" dm_lacks "Couldn't power up the GPU"
 }
 check_no_gx_warn() {
+    dmesg_needed no-gx-warn && return
     verdict no-gx-warn none "GX power domain not available" dm_lacks "GX power domain not available"
 }
 check_renderer() {
@@ -76,6 +89,7 @@ check_renderer() {
     verdict renderer FD830 "no FD830 in eglinfo -B" grep -q FD830 <<<"$e"
 }
 check_zap() {
+    dmesg_needed zap && return
     local l; l=$(grep -Em1 'pas_init_image' <<<"$DMESG")
     verdict zap "no pas_init_image error" "$l" [ -z "$l" ]
 }
@@ -109,6 +123,7 @@ check_pon_reason() {
     fi
 }
 check_suspend_hang_gpu() {
+    dmesg_needed suspend-hang-gpu && return
     local l
     l=$(grep -E 'dpm_run_callback|DPM watchdog|dpm_watchdog' <<<"$DMESG" | grep -Em1 "$GPU_DEV|3d37000.gmu|gxclkctl")
     verdict suspend-hang-gpu none "$l" [ -z "$l" ]
@@ -182,6 +197,7 @@ cycles() {
     local secs=${1:-} rep=${TRACE_REPORT:-} tmp s r
     if [ -z "$rep" ]; then
         [ -n "$secs" ] || { echo "usage: $0 cycles <seconds>" >&2; exit 2; }
+        command -v trace-cmd >/dev/null || { echo "cycles: trace-cmd not installed (run tablet/setup.sh)" >&2; exit 1; }
         tmp=$(mktemp -d) || exit 1
         trap 'rm -rf "$tmp"' EXIT
         trace-cmd record -o "$tmp/trace.dat" -b 4096 -e rpm:rpm_suspend -e rpm:rpm_resume \
@@ -189,9 +205,11 @@ cycles() {
         trace-cmd report -i "$tmp/trace.dat" >"$tmp/report.txt" || exit 1
         rep=$tmp/report.txt
     fi
+    if [ ! -r "$rep" ]; then echo "cycles: trace report unreadable: $rep" >&2; exit 1; fi
     # rpm tracepoints print "<dev> flags-.." (accept "name=<dev>" too)
     s=$(grep -Ec "rpm_suspend: (name=)?$GPU_DEV( |$)" "$rep")
     r=$(grep -Ec "rpm_resume: (name=)?$GPU_DEV( |$)" "$rep")
+    s=${s:-0}; r=${r:-0}
     echo "cycles=$(( s < r ? s : r )) suspend=$s resume=$r"
 }
 
