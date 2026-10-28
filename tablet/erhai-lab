@@ -1,0 +1,268 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""erhai-lab: GPU runtime-PM lab for the OnePlus Pad 3 (erhai, SM8750).
+
+One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
+
+  fetch <candidate>   download a CI-built lab kernel, verify SHA256SUMS and the
+                      UKI/modules kernelrelease, install it beside the package
+                      kernel (/boot/<kver>.efi + /usr/lib/modules/<kver>/)
+  whoami              print the booted kernel's lab candidate and build
+
+Rungs, experiments and their numbers are described in docs/ladder.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = "nadelacruz-00/erhai-gpu-lab"
+BOOT_DIR = Path("/boot")
+MODULES_DIR = Path("/usr/lib/modules")
+
+
+class LabError(Exception):
+    """A refusal or failure with a reason the user should see verbatim."""
+
+
+def lab_identity(cmdline: str) -> tuple[str, str]:
+    """(candidate, build) from erhai_lab.* params on a lab UKI's cmdline."""
+    cand = build = ""
+    for word in cmdline.split():
+        if word.startswith("erhai_lab.candidate="):
+            cand = word.split("=", 1)[1]
+        elif word.startswith("erhai_lab.build="):
+            build = word.split("=", 1)[1]
+    return cand, build
+
+
+# ----------------------------------------------------------------- fetch ---
+
+def parse_sums(text: str) -> dict[str, str]:
+    """sha256sum output -> {filename: hexdigest}."""
+    sums: dict[str, str] = {}
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        m = re.fullmatch(r"([0-9a-f]{64}) [ *](.+)", line.strip())
+        if not m:
+            raise LabError(f"SHA256SUMS line {n} is malformed: {line!r}")
+        sums[m.group(2)] = m.group(1)
+    if not sums:
+        raise LabError("SHA256SUMS is empty")
+    return sums
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_assets(directory: Path) -> None:
+    """Every downloaded file must be listed in SHA256SUMS and match it."""
+    sums_path = directory / "SHA256SUMS"
+    if not sums_path.is_file():
+        raise LabError("release has no SHA256SUMS; refusing to install")
+    sums = parse_sums(sums_path.read_text())
+    present = {p.name for p in directory.iterdir() if p.is_file()} - {"SHA256SUMS"}
+    missing = sorted(set(sums) - present)
+    if missing:
+        raise LabError(f"listed in SHA256SUMS but not downloaded: {missing}")
+    unlisted = sorted(present - set(sums))
+    if unlisted:
+        raise LabError(f"downloaded but not listed in SHA256SUMS: {unlisted}")
+    for name, want in sorted(sums.items()):
+        got = sha256_file(directory / name)
+        if got != want:
+            raise LabError(f"checksum mismatch for {name}: {got} != {want}")
+
+
+@dataclasses.dataclass
+class Assets:
+    kver: str
+    uki: Path
+    modules: Path
+    config: Path
+
+
+def identify_assets(directory: Path, candidate: str) -> Assets:
+    """One UKI, one modules tarball, one config, all for the same lab kver."""
+    names = sorted(p.name for p in directory.iterdir() if p.is_file())
+    ukis = [n for n in names if n.endswith(".efi")]
+    mods = [n for n in names if n.startswith("modules-") and n.endswith(".tar.zst")]
+    cfgs = [n for n in names if n.startswith("config-")]
+    if len(ukis) != 1 or len(mods) != 1 or len(cfgs) != 1:
+        raise LabError(f"expected one .efi, one modules tarball and one config, got {names}")
+    kver = ukis[0][: -len(".efi")]
+    if mods[0] != f"modules-{kver}.tar.zst" or cfgs[0] != f"config-{kver}":
+        raise LabError(f"UKI {ukis[0]} does not match {mods[0]} / {cfgs[0]}")
+    if not kver.endswith(f"-lab-{candidate}"):
+        raise LabError(f"kernelrelease {kver} is not a lab build of {candidate}")
+    return Assets(kver, directory / ukis[0], directory / mods[0], directory / cfgs[0])
+
+
+def latest_tag(tags: list[str], candidate: str) -> str:
+    """Highest lab-<candidate>-<run> tag."""
+    prefix = f"lab-{candidate}-"
+    runs = []
+    for t in tags:
+        if t.startswith(prefix) and t[len(prefix):].isdigit():
+            runs.append(int(t[len(prefix):]))
+    if not runs:
+        raise LabError(f"no release found for candidate {candidate}")
+    return f"{prefix}{max(runs)}"
+
+
+API = "https://api.github.com"
+
+
+def http_get(url: str, accept: str = "application/vnd.github+json") -> bytes:
+    """Anonymous HTTPS GET: the lab repo is public, and fetch runs as root,
+    which has no gh login."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(url, headers={"Accept": accept,
+                                               "User-Agent": "erhai-lab"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        raise LabError(f"GET {url}: HTTP {e.code} {e.reason}") from None
+    except urllib.error.URLError as e:
+        raise LabError(f"GET {url}: {e.reason}") from None
+
+
+def release_assets(releases: list[dict], tag: str) -> list[tuple[str, str]]:
+    """(name, download url) of every asset of the release tagged `tag`."""
+    for r in releases:
+        if r.get("tag_name") == tag:
+            return [(a["name"], a["browser_download_url"]) for a in r.get("assets", [])]
+    raise LabError(f"release {tag} not found")
+
+
+def install_assets(assets: Assets, boot_dir: Path = BOOT_DIR,
+                   modules_dir: Path = MODULES_DIR) -> None:
+    """Copy a verified lab kernel beside the package kernel.
+
+    Only ever writes /boot/<lab kver>.efi and /usr/lib/modules/<lab kver>/;
+    the package's UKI, its modules and rEFInd's default are never touched.
+    """
+    if "-lab-" not in assets.kver:
+        raise LabError(f"refusing to install non-lab kernelrelease {assets.kver}")
+    target = modules_dir / assets.kver
+    staging = Path(tempfile.mkdtemp(prefix=".erhai-lab-", dir=modules_dir))
+    try:
+        subprocess.run(["tar", "--zstd", "-x", "-f", str(assets.modules),
+                        "-C", str(staging)], check=True)
+        unpacked = staging / assets.kver
+        if not unpacked.is_dir():
+            raise LabError(f"modules tarball has no {assets.kver}/ directory")
+        if target.exists():
+            shutil.rmtree(target)
+        unpacked.rename(target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    tmp_uki = boot_dir / f".{assets.kver}.efi.tmp"
+    shutil.copyfile(assets.uki, tmp_uki)
+    os.replace(tmp_uki, boot_dir / f"{assets.kver}.efi")
+    subprocess.run(["depmod", "-a", assets.kver], check=True)
+
+
+def find_release(repo: str, candidate: str, tag: str | None,
+                 get=http_get) -> tuple[str, list[tuple[str, str]]]:
+    """(tag, assets) of the requested or latest release of `candidate`.
+
+    The anonymous release list can come back empty while the releases exist
+    (seen 2026-10-23: the list returned [] and /releases/tags/<tag> answered),
+    so an explicit tag missing from the list is looked up by tag.
+    """
+    releases = json.loads(get(f"{API}/repos/{repo}/releases?per_page=100"))
+    if not tag:
+        if not releases:
+            raise LabError("GitHub returned an empty release list; pass "
+                           f"--tag lab-{candidate}-<run> (see the repo's Releases page)")
+        tag = latest_tag([r["tag_name"] for r in releases], candidate)
+    if not any(r.get("tag_name") == tag for r in releases):
+        releases = [json.loads(get(f"{API}/repos/{repo}/releases/tags/{tag}"))]
+    return tag, release_assets(releases, tag)
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    tag, assets_list = find_release(args.repo, args.candidate, args.tag)
+    with tempfile.TemporaryDirectory(prefix="erhai-lab-fetch-") as tmp:
+        d = Path(tmp)
+        for name, url in assets_list:
+            if "/" in name or name.startswith("."):
+                raise LabError(f"refusing asset name {name!r}")
+            print(f"  downloading {name}")
+            (d / name).write_bytes(http_get(url, "application/octet-stream"))
+        verify_assets(d)
+        assets = identify_assets(d, args.candidate)
+        print(f"{tag}: verified {assets.kver} ({len(parse_sums((d / 'SHA256SUMS').read_text()))} files)")
+        if args.verify_only:
+            return 0
+        require_root("fetch")
+        install_assets(assets)
+    print(f"installed /boot/{assets.kver}.efi and {MODULES_DIR / assets.kver}/")
+    print("Pick it in the rEFInd menu on the next boot; the default entry is unchanged.")
+    return 0
+
+
+def cmd_whoami(args: argparse.Namespace) -> int:
+    cand, build = lab_identity(Path("/proc/cmdline").read_text())
+    kver = os.uname().release
+    if cand:
+        print(f"{kver}: lab candidate {cand}, build {build or '?'}")
+    else:
+        print(f"{kver}: package kernel (not a lab build)")
+    return 0
+
+
+# ------------------------------------------------------------------- cli ---
+
+def require_root(what: str) -> None:
+    if os.geteuid() != 0:
+        raise LabError(f"{what} needs root; run it with sudo")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="erhai-lab", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    f = sub.add_parser("fetch", help="download, verify and install a lab kernel")
+    f.add_argument("candidate")
+    f.add_argument("--tag", help="exact release tag (default: latest for the candidate)")
+    f.add_argument("--repo", default=REPO)
+    f.add_argument("--verify-only", action="store_true",
+                   help="download and verify, install nothing")
+    f.set_defaults(func=cmd_fetch)
+
+    sub.add_parser("whoami", help="which lab candidate is booted").set_defaults(func=cmd_whoami)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except LabError as e:
+        print(f"erhai-lab: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Unit tests gate every kernel build.  Each candidate under
+# candidates/ becomes one matrix job that builds the pinned erhai tree with the
+# candidate's patches and extra.config, and publishes the UKI, the modules
+# tarball, the final .config and SHA256SUMS as a Release tagged
+# lab-<candidate>-<run_number>.
+name: kernel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "candidates/**"
+      - "ci/**"
+      - ".github/workflows/kernel.yml"
+  workflow_dispatch:
+    inputs:
+      candidates:
+        description: "Space-separated candidate dirs to build (empty = all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kernel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: List candidates
+        id: list
+        env:
+          WANTED: ${{ inputs.candidates }}
+        run: |
+          if [ -n "$WANTED" ]; then
+            set -- $WANTED
+          else
+            set --
+            for d in candidates/*/; do
+              d=${d%/}; set -- "$@" "${d#candidates/}"
+            done
+          fi
+          for c in "$@"; do
+            [ -f "candidates/$c/cmdline" ] || { echo "unknown candidate $c" >&2; exit 1; }
+          done
+          printf '%s\n' "$@" | jq -R . | jq -sc . > list.json
+          echo "candidates=$(cat list.json)" >> "$GITHUB_OUTPUT"
+    outputs:
+      candidates: ${{ steps.list.outputs.candidates }}
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate: ${{ fromJSON(needs.test.outputs.candidates) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
+
+      - name: Build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev dwarves \
+            cpio kmod rsync zstd python3 systemd-ukify systemd-boot-efi
+          ukify --version
+          ls /usr/lib/systemd/boot/efi/
+
+      - name: Build ${{ matrix.candidate }}
+        id: build
+        run: ci/build-candidate.sh "${{ matrix.candidate }}" "${{ github.run_number }}"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAND: ${{ matrix.candidate }}
+          KVER: ${{ steps.build.outputs.kver }}
+        run: |
+          tag="lab-$CAND-${{ github.run_number }}"
+          gh release create "$tag" out/"$CAND"/* \
+            --title "$CAND #${{ github.run_number }} ($KVER)" \
+            --notes "Candidate \`$CAND\`, kernelrelease \`$KVER\`, base tree \`$(cat candidates/BASE_SHA)\`, lab commit \`${GITHUB_SHA}\`. Install with \`erhai-lab fetch $CAND\`; never with dpkg." \
+            --target "$GITHUB_SHA"

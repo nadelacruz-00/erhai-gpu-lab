@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Unit tests on every push; kernel.yml runs them again before any build.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests -v
+      - run: bash -n ci/build-candidate.sh && bash -n ci/assert-config.sh && sh -n tablet/install.sh

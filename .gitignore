@@ -1,0 +1,5 @@
+/work/
+/out/
+/.gstack/
+__pycache__/
+*.pyc
