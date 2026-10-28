@@ -47,7 +47,7 @@ Applies to every rung and to the Success Criteria.
 
 | Rung | What | Pass |
 |---|---|---|
-| g-1 fuse | On the current kernel, before any build: `sudo devmem2 0x221c8138 h` (qfprom `0x221c8000 + 0x138`, bits 0-9; D4: devmem2, g0 cross-checks against the qfprom cell). Record raw and masked value. | Value recorded. If it is not one of `0, 252, 242, 232, 221, 190`, patch 4 gets one extra commit mapping that value to a bin with the OPP mask argued from Qualcomm's table, and the value goes into the TheMojoMan issue; otherwise the adreno driver would refuse the bin and the GPU would not probe on g0. |
+| g-1 fuse | On the current kernel, before any build: `sudo devmem2 0x221c8138 h` (qfprom `0x221c8000 + 0x138`, 9 bits from bit 0, `& 0x1ff`; D4: devmem2, g0 cross-checks against the qfprom cell). Record raw and masked value. | Value recorded. If it is not one of `0, 252, 242, 232, 221, 190`, patch 4 gets one extra commit mapping that value to a bin with the OPP mask argued from Qualcomm's table, and the value goes into the TheMojoMan issue; otherwise the adreno driver would refuse the bin and the GPU would not probe on g0. |
 | g0 control | Same `gpu-checks.sh g0` on the package kernel first (D9 control row). Needs `MODE=once`. | Preserved behaviors (1)-(5) below all PASS, `-19` present, `genpd:1` absent. Recorded in Results before the candidate's g0. This proves the checker before it judges the candidate. |
 | g0 boot | Boot `60-gpu-reference` (needs `MODE=once`, pin released); run `tablet/gpu-checks.sh g0` | No FAIL. Preserved (D9): (1) `probe`: GPU probes without `erhai_gmu_enable`, `/dev/dri/renderD128` driver `msm`, no `Couldn't power up the GPU` line; (2) `zap`: auth OK, no `pas_init_image`/zap error; (3) `renderer`: `eglinfo -B` reports `FD830`; (4) `pin-released`: `erhai-gpu-pin-once` reaches `RELEASED` (`/run/erhai-gpu-pin-once.state`, wait <= SETTLE+TIMEOUT); (5) `shell-on-gpu`: gnome-shell maps freedreno/`libgallium`, not `llvmpipe`/`swrast`. Intentional changes: `no-minus19` (no `-19` at boot); `gmu-genpd` (`3d37000.gmu` has `genpd:0` and `genpd:1`); `runtime-suspends` (`runtime_status` of `3d00000.gpu` reaches `suspended` at least once in 60 s idle with `control=auto`). Also: `gxclkctl-bound` (`3d64000.clock-controller/driver` -> `gxclkctl-kaanapali`); `gx-gdsc-summary` (`sudo cat /sys/kernel/debug/pm_genpd/pm_genpd_summary` lists `gx_clkctl_gx_gdsc` with the GMU); `no-oops`; `no-gx-warn` (the patch-7 `dev_warn` is absent); `fuse` (speed_bin and enabled OPPs via `available_frequencies`); evidence paths `pstore`, `hung-task`, `dpm-watchdog` (`grep DPM_WATCHDOG /proc/config.gz` = y); `pon-reason` (D3); `suspend-hang-gpu`, `dmesg-readable` (a dmesg that cannot be read fails the absence checks). |
 | g1 control | On the current `lab-43` kernel (or the package kernel), `control=auto`, run `tools/gpu-hang/gpu-hang --iterations 1`. Record dmesg. Never the default count here. | Outcome recorded either way: infinite loop (today's freeze) or clean recovery. If the control recovers, g1 on the candidate shows only "the CP-hang path still works" and P1a's proof moves to the first natural wedge in g2/g4. |
@@ -77,7 +77,7 @@ The candidate is an ordered stack of 13 commits, bottom to top:
 12. revert `992da703ed` (cold boot)
 13. revert `9c3aa45c45` (IFPC)
 
-Commits 3 and 4 move together (the catalog's GEN1 entry and the DT reg sizes are one change; the OPP table needs the qfprom cell from the same patch). The defconfig (5) is applied to every prefix that boots a GPU.
+Commits 3 and 4 move together (the catalog's GEN1 entry and the DT reg sizes are one change; the OPP table needs the qfprom cell from the same patch). `extra.config` sets `CONFIG_SM_GPUCC_8750=y` for every prefix build, including `--prefix 2`.
 
 Export a prefix: `tools/export-patches.sh <kernel-dir> erhai-gpu-reference 60-gpu-reference --prefix N`. Order, each expected to boot:
 
@@ -107,11 +107,11 @@ Fill from the tablet. Paste command output verbatim.
 | Kernel | |
 | Date | |
 | Raw (`sudo devmem2 0x221c8138 h`) | |
-| Masked (bits 0-9, `& 0x3ff`) | |
+| Masked (`& 0x1ff`) | |
 | In `0, 252, 242, 232, 221, 190`? | |
 | Action | |
 
-Command: `sudo devmem2 0x221c8138 h`. The masked value is bits 0-9 per the qfprom cell (`& 0x3ff`); also record `& 0x1ff` if the two differ. If not in the table, go back to Task 3 step 10 for the mapping commit.
+Command: `sudo devmem2 0x221c8138 h`. The DT cell is `gpu-speed-bin@138 { reg = <0x138 0x2>; bits = <0 9>; }` (nvmem `bits = <offset nbits>`: 9 bits from bit 0), so `speed_bin = value & 0x1ff`. If not in the table, go back to Task 3 step 10 for the mapping commit.
 
 ### PON reason probe (Task 9)
 
