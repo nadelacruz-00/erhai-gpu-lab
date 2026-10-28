@@ -34,6 +34,26 @@ LOG=$STATE/$CAND.log
 COUNT_FILE=$STATE/$CAND.objects        # object count of the last full build
 TIMES=$STATE/times.log
 
+# Compile with CI's gcc major (ubuntu-24.04-arm ships gcc 13): the tablet's
+# gcc 15 builds a different image (RELR relocations, 8 MB smaller) that has
+# not been shown to boot. CI_GCC= (empty) builds with the default gcc.
+CI_GCC=${CI_GCC-13}
+if [ -n "$CI_GCC" ]; then
+    if command -v "gcc-$CI_GCC" >/dev/null; then
+        TC=$STATE/toolchain-gcc$CI_GCC
+        mkdir -p "$TC"
+        ln -sf "$(command -v "gcc-$CI_GCC")" "$TC/gcc"
+        for t in ld ar nm objcopy objdump strip readelf as; do
+            ln -sf "$(command -v "$t")" "$TC/$t"
+        done
+        export CROSS_COMPILE=$TC/
+    else
+        echo "build-local: gcc-$CI_GCC not installed (CI builds with it): sudo apt-get install -y gcc-$CI_GCC" >&2
+        echo "build-local: or build with the default gcc ($(gcc -dumpversion)): CI_GCC= $0 $CAND" >&2
+        exit 2
+    fi
+fi
+
 # CPU clocks below the hardware max make the timing incomparable; say so.
 for p in /sys/devices/system/cpu/cpufreq/policy*; do
     [ -r "$p/scaling_max_freq" ] || continue

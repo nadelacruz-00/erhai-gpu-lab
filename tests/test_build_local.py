@@ -35,6 +35,8 @@ class BuildLocal(unittest.TestCase):
         (self.lab / "candidates" / "BASE_SHA").write_text(git(self.kernel, "rev-parse", "HEAD") + "\n")
         shutil.copy(SCRIPT, self.lab / "tools" / "build-local.sh")
         self.fake = tmp / "fake-build"
+        self.ci_gcc = ""          # default gcc unless a test opts in
+        self.extra_env = {}
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -47,7 +49,8 @@ class BuildLocal(unittest.TestCase):
         return subprocess.run(
             ["bash", str(self.lab / "tools" / "build-local.sh"), *args],
             capture_output=True, text=True, timeout=60,
-            env={"PATH": "/usr/bin:/bin", "HOME": self._tmp.name, "BUILD_CMD": str(self.fake)})
+            env={"PATH": "/usr/bin:/bin", "HOME": self._tmp.name, "BUILD_CMD": str(self.fake),
+                 "CI_GCC": self.ci_gcc, **self.extra_env})
 
     def test_usage(self):
         r = self.run_script()
@@ -89,6 +92,27 @@ class BuildLocal(unittest.TestCase):
         r = self.run_script("cand", "--kernel-dir", str(self.kernel), "--interval", "0.2")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual((state / "cand.objects").read_text().strip(), "100")
+
+    def test_ci_gcc_missing_refuses(self):
+        self.fake_build("exit 0\n")
+        self.ci_gcc = "99"
+        r = self.run_script("cand", "--kernel-dir", str(self.kernel))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("gcc-99 not installed", r.stderr)
+
+    def test_ci_gcc_sets_cross_compile_prefix(self):
+        bindir = Path(self._tmp.name) / "bin"
+        bindir.mkdir()
+        (bindir / "gcc-77").write_text("#!/bin/sh\necho fake\n")
+        (bindir / "gcc-77").chmod(0o755)
+        self.ci_gcc = "77"
+        self.extra_env = {"PATH": f"{bindir}:/usr/bin:/bin"}
+        self.fake_build('echo "XC=$CROSS_COMPILE"; readlink "${CROSS_COMPILE}gcc"; echo "  CC      a.o"\n')
+        r = self.run_script("cand", "--kernel-dir", str(self.kernel), "--interval", "0.2")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        log = (self.lab / "out" / ".build-local" / "cand.log").read_text()
+        self.assertIn("toolchain-gcc77/", log)
+        self.assertIn(str(bindir / "gcc-77"), log)
 
     def test_failure_propagates_and_shows_log(self):
         self.fake_build('echo "  CC      a.o"; echo "error: boom" >&2; exit 3\n')
