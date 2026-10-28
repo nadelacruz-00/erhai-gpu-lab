@@ -186,3 +186,38 @@ class Whoami(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FetchFromDir(unittest.TestCase):
+    """fetch --from-dir: a local build gets the same checks as a release."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def run_fetch(self, *extra):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = lab.main(["fetch", "00-cp-trace", "--from-dir", str(self.d), "--verify-only", *extra])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_verified_local_build(self):
+        write_release(self.d)
+        rc, out, _ = self.run_fetch()
+        self.assertEqual(rc, 0)
+        self.assertIn(f"local {self.d}: verified {KVER}", out)
+
+    def test_tampered_local_build_refuses(self):
+        write_release(self.d, corrupt=f"{KVER}.efi")
+        rc, _, err = self.run_fetch()
+        self.assertEqual(rc, 2)
+        self.assertIn("checksum mismatch", err)
+
+    def test_missing_dir_refuses(self):
+        self.d = self.d / "nope"
+        rc, _, err = self.run_fetch()
+        self.assertEqual(rc, 2)
+        self.assertIn("is not a directory", err)

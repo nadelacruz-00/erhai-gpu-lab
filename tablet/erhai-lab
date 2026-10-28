@@ -7,6 +7,7 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
   fetch <candidate>   download a CI-built lab kernel, verify SHA256SUMS and the
                       UKI/modules kernelrelease, install it beside the package
                       kernel (/boot/<kver>.efi + /usr/lib/modules/<kver>/)
+                      (--from-dir DIR: a local tools/build-local.sh build instead)
   whoami              print the booted kernel's lab candidate, build and stack
   setup               (root) install the g1 tools via the installed setup.sh and
                       build the pinned IGT msm_recovery under /var/lib/erhai-gpu/igt
@@ -229,7 +230,26 @@ def find_release(repo: str, candidate: str, tag: str | None,
     return tag, release_assets(releases, tag)
 
 
+def verify_and_install(d: Path, candidate: str, label: str, verify_only: bool) -> int:
+    verify_assets(d)
+    assets = identify_assets(d, candidate)
+    print(f"{label}: verified {assets.kver} ({len(parse_sums((d / 'SHA256SUMS').read_text()))} files)")
+    if verify_only:
+        return 0
+    require_root("fetch")
+    install_assets(assets)
+    print(f"installed /boot/{assets.kver}.efi and {MODULES_DIR / assets.kver}/")
+    print("Pick it in the rEFInd menu on the next boot; the default entry is unchanged.")
+    return 0
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
+    if args.from_dir:
+        # A local build (tools/build-local.sh): same checks, no download.
+        d = Path(args.from_dir)
+        if not d.is_dir():
+            raise LabError(f"{d} is not a directory")
+        return verify_and_install(d, args.candidate, f"local {d}", args.verify_only)
     tag, assets_list = find_release(args.repo, args.candidate, args.tag)
     with tempfile.TemporaryDirectory(prefix="erhai-lab-fetch-") as tmp:
         d = Path(tmp)
@@ -238,16 +258,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 raise LabError(f"refusing asset name {name!r}")
             print(f"  downloading {name}")
             (d / name).write_bytes(http_get(url, "application/octet-stream"))
-        verify_assets(d)
-        assets = identify_assets(d, args.candidate)
-        print(f"{tag}: verified {assets.kver} ({len(parse_sums((d / 'SHA256SUMS').read_text()))} files)")
-        if args.verify_only:
-            return 0
-        require_root("fetch")
-        install_assets(assets)
-    print(f"installed /boot/{assets.kver}.efi and {MODULES_DIR / assets.kver}/")
-    print("Pick it in the rEFInd menu on the next boot; the default entry is unchanged.")
-    return 0
+        return verify_and_install(d, args.candidate, tag, args.verify_only)
 
 
 def whoami_line() -> str:
@@ -1240,6 +1251,8 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("candidate")
     f.add_argument("--tag", help="exact release tag (default: latest for the candidate)")
     f.add_argument("--repo", default=REPO)
+    f.add_argument("--from-dir", metavar="DIR",
+                   help="install a local build (tools/build-local.sh's out/<candidate>/) instead of a release")
     f.add_argument("--verify-only", action="store_true",
                    help="download and verify, install nothing")
     f.set_defaults(func=cmd_fetch)

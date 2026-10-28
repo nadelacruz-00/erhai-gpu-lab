@@ -30,6 +30,12 @@ stack; only a candidate that passes its rung becomes a PR to the port.
   wedge lines). `whoami`, `status`, `soak status` and `report` need no root;
   every other subcommand runs with sudo. The commands per rung are in the
   ladder's Runbook.
+- **`tools/build-local.sh <candidate>`** builds a candidate on the tablet exactly
+  as CI does, from the local kernel checkout (`--kernel-dir`, default
+  `~/Development/oneplus-erhai-linux`), with a live progress line every 2 s
+  (phase, objects/ETA, hottest CPU, clocks, thermal clamp). Install the result
+  with `sudo erhai-gpu-lab fetch <candidate> --from-dir out/<candidate>`.
+  Build times go to `out/.build-local/times.log`.
 - **`tools/ship-candidate.sh <kernel-dir> <branch> <candidate>`** goes from a
   kernel branch to a queued g0: it exports the patches, pushes, waits for CI,
   fetches that run's release and queues g0. Run it as the normal user (it calls
