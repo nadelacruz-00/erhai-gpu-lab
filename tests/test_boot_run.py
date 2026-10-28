@@ -379,6 +379,17 @@ class Status(unittest.TestCase):
         self.assertRegex(text, r"power-x\.txt\s+PASS=1 FAIL=0")
         self.assertNotIn("notes.txt", text)
 
+    def test_status_lists_g1_summaries_not_wrapper_logs(self):
+        with tempfile.TemporaryDirectory() as td:
+            state = Path(td)
+            (state / "g1-summary-7.3.0-test-01234567.txt").write_text("PASS g1 gpu-fault\n")
+            (state / "g1-gpu-fault-1792600000.txt").write_text("PASS wrapper\n")
+            (state / "g1-hangcheck-1792600000.txt").write_text("FAIL wrapper\n")
+            text = lab.status_report(state, "w", "once")
+        self.assertRegex(text, r"g1-summary-7\.3\.0-test-01234567\.txt\s+PASS=1 FAIL=0")
+        self.assertNotIn("g1-gpu-fault", text)
+        self.assertNotIn("g1-hangcheck", text)
+
     def test_status_empty_state(self):
         with tempfile.TemporaryDirectory() as td:
             text = lab.status_report(Path(td) / "missing", "w", "?")

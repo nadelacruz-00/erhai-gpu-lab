@@ -8,6 +8,10 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
                       UKI/modules kernelrelease, install it beside the package
                       kernel (/boot/<kver>.efi + /usr/lib/modules/<kver>/)
   whoami              print the booted kernel's lab candidate, build and stack
+  setup               (root) install the g1 tools via the installed setup.sh and
+                      build the pinned IGT msm_recovery under /var/lib/erhai-gpu/igt
+  mode once|always    (root) set MODE= in /etc/erhai/gpu-pin.conf, enable its pin
+                      service and disable the other; takes effect at the next boot
   queue <label> --expect <cand|package>
                       (root) queue a g0 check for the next boot of that kernel
   boot-run            (root, boot service) log this boot, run the queued g0 if the
@@ -16,8 +20,6 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
   g1 [--runs 5] [--hangcheck 1] [--pinned] [--yes]
                       (root) run IGT msm_recovery per the ladder, stop at the first FAIL;
                       this is the only subcommand that hangs the GPU
-  setup               (root) install the g1 tools via the installed setup.sh and
-                      build the pinned IGT msm_recovery under /var/lib/erhai-gpu/igt
   power [--minutes N] (root) sample the battery V*I while idle on battery and compare
                       the average with the 3639 mW baseline (default 30 minutes)
   soak start|stop|tick|status
@@ -618,7 +620,8 @@ def status_report(state: Path, whoami: str, mode: str) -> str:
     out += [f"  {line}" for line in boots[-5:]] or ["  no boots logged"]
     files = []
     if state.is_dir():
-        for pat in ("g*-*.txt", "power-*.txt"):
+        # not g1-*.txt: igt-recovery keeps its per-run logs (g1-<subtest>-*) here
+        for pat in ("g0-*.txt", "g1-summary-*.txt", "power-*.txt"):
             files += [p for p in state.glob(pat) if p.is_file()]
     files = sorted(set(files), key=lambda p: (p.stat().st_mtime, p.name), reverse=True)[:5]
     out.append("evidence:")

@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """erhai-gpu-lab mode once|always: MODE rewrite and the two pin services."""
 
+import argparse
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -128,6 +130,16 @@ class CmdMode(unittest.TestCase):
         self.assertEqual(p.parse_args(["mode", "once"]).mode, "once")
         with self.assertRaises(SystemExit):
             p.parse_args(["mode", "off"])
+
+
+
+class HelpText(unittest.TestCase):
+    def test_docstring_lists_every_subcommand_in_parser_order(self):
+        p = lab.build_parser()
+        subs = next(a for a in p._actions if isinstance(a, argparse._SubParsersAction))
+        listed = re.findall(r"^  ([a-z][a-z0-9-]*)", lab.__doc__, re.MULTILINE)
+        self.assertEqual(listed, list(subs.choices))
+        self.assertIn("mode", listed)
 
 
 if __name__ == "__main__":
