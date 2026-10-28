@@ -22,11 +22,16 @@ stack; only a candidate that passes its rung becomes a PR to the port.
   tablet/install.sh` installs it as `/usr/local/sbin/erhai-gpu-lab`) runs on the
   tablet. `erhai-gpu-lab fetch 60-gpu-reference` downloads a release, verifies every
   checksum and the UKI/modules version match, and installs the kernel beside
-  the package kernel. rEFInd's default is never changed.
+  the package kernel. The kernel is always picked by hand in rEFInd; the default
+  entry is never changed. `sudo erhai-gpu-lab setup` installs the g1 tools and
+  builds IGT `msm_recovery`; `erhai-gpu-lab status` shows the booted candidate,
+  the pin mode, the queued g0 and recent boots; `erhai-gpu-lab report [--out
+  FILE]` prints Markdown of all evidence (run it with sudo to include the soak
+  wedge lines). The commands per rung are in the ladder's Runbook.
 
 ## Ladder
 
-`docs/ladder.md`.
+`docs/ladder.md` (see its Runbook for the commands per rung).
 
 ## Tests
 

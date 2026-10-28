@@ -45,6 +45,18 @@ class Docs(unittest.TestCase):
         self.assertIn("NEXT boot", text)
         self.assertIn("/var/lib/systemd/pstore", text)
 
+    def test_ladder_runbook(self):
+        ladder = (REPO_ROOT / "docs" / "ladder.md").read_text()
+        for needle in ["## Runbook", "erhai-gpu-lab soak start", "erhai-gpu-lab g1 --pinned",
+                       "ship-candidate.sh", "picked by hand in rEFInd",
+                       "sudo erhai-gpu-lab g1 --runs 1 --hangcheck 0"]:
+            self.assertIn(needle, ladder)
+        self.assertNotIn("shader loop", ladder)
+        self.assertNotIn("efibootmgr", ladder)
+        self.assertNotIn("(no root, once)", ladder)
+        self.assertNotIn("igt-recovery/igt/", ladder)
+        self.assertIn("erhai-gpu-lab report", (REPO_ROOT / "README.md").read_text())
+
 
 class GitIgnore(unittest.TestCase):
     def test_superpowers_is_ignored(self):
