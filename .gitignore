@@ -3,3 +3,4 @@
 /.gstack/
 __pycache__/
 *.pyc
+/tools/gpu-hang/gpu-hang
