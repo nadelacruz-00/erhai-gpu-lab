@@ -114,9 +114,12 @@ check_suspend_hang_gpu() {
     verdict suspend-hang-gpu none "$l" [ -z "$l" ]
 }
 check_probe() {
-    local d; d=$(link_target "$SYSROOT/sys/class/drm/renderD128/device/driver")
-    verdict probe msm "driver=${d:-none}" [ "$d" = msm ]
+    local r g
+    r=$(link_target "$SYSROOT/sys/class/drm/renderD128/device/driver")
+    g=$(link_target "$GPU_DIR/driver")
+    verdict probe "renderD128=$r gpu=$g" "renderD128=${r:-none} gpu=${g:-none}" probe_ok "$r" "$g"
 }
+probe_ok() { { [ "$1" = msm_dpu ] || [ "$1" = msm ]; } && [ "$2" = adreno ]; }
 check_pin_released() {
     local mode settle timeout limit waited=0 state=
     mode=$(sed -n 's/^MODE=//p' "$PIN_CONF" 2>/dev/null | tail -1)
