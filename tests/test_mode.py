@@ -2,6 +2,8 @@
 """erhai-gpu-lab mode once|always: MODE rewrite and the two pin services."""
 
 import argparse
+import contextlib
+import io
 import os
 import re
 import stat
@@ -128,8 +130,10 @@ class CmdMode(unittest.TestCase):
     def test_parser_accepts_only_once_and_always(self):
         p = lab.build_parser()
         self.assertEqual(p.parse_args(["mode", "once"]).mode, "once")
-        with self.assertRaises(SystemExit):
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
             p.parse_args(["mode", "off"])
+        self.assertIn("invalid choice: 'off'", err.getvalue())
 
 
 
