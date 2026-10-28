@@ -40,7 +40,7 @@ Applies to every rung and to the Success Criteria.
 
 **Limit (eng review D3).** On this board ramoops survives only a warm reset, i.e. a kernel-driven reboot such as the `panic=30` path. A PMIC-watchdog reset or a power-key hold does not preserve DRAM (`dc13a4717c`, 2026-08-28, re-added `af94396238`). So a hung-task/softlockup/DPM-watchdog *panic* leaves a record, but a PMIC watchdog bite or a thumb on the power key leaves nothing. Do not read a cold reset as "pstore silent".
 
-**PON reason: pending operator probe (Task 9).** One bounded probe (<= 1 h, before g0) looks for a PMIC power-on-reason source readable from Linux (an SDAM cell via the existing `spmi_sdam0` nvmem, `qcom-pon`, or the SDAM reboot-mode cells yzddmr6 wired in `efe984cb9f`/`31a79407cf`). If found, g0 logs the value every boot (`pon-reason`) and clause 3 uses it to separate watchdog resets from power-key holds. If not found, g0 records "PON reason: not readable" and clause 3 runs on the baseline protocol alone. Result: see Results.
+**PON reason: no reason code, but warm vs cold is readable (probe 2026-10-28, see Results).** The SDAM `restart_reason` byte (`spmi_sdam0` offset `0x48`) reads `00` after both a software reboot and a power-key hold, so Linux cannot tell a PMIC-watchdog reset from a power-key hold. A cold (PMIC) reset does wipe SDAM `0x50-0x5b`, which holds the RTC offset, so the next boot starts at 1970 and the journal shows `erhai-rtc-sync: system clock is 1970-… -- refusing to store it`. A warm reboot (including a `panic=30` reboot) keeps the offset. Clause 3 therefore classifies an empty-log reset as **cold** (PMIC watchdog or power key: indistinguishable) when the following boot's journal has that rtc-sync line, else **warm** (expect a pstore record). `pon-reason` in g0 stays `INFO not-readable`.
 
 ## Rungs
 
@@ -117,7 +117,21 @@ Command: `sudo devmem2 0x221c8138 h`. The DT cell is `gpu-speed-bin@138 { reg = 
 
 ### PON reason probe (Task 9)
 
-Pending operator probe (Task 9). Result: ____
+Done 2026-10-28 (package kernel `lab-43`). The nvmem node rejects whole-block reads (`EINVAL`); read it one byte at a time, no sudo needed:
+
+```
+F=/sys/bus/nvmem/devices/spmi_sdam0/nvmem
+for o in $(seq $((0x40)) $((0x7f))); do printf '%02x %s\n' $o "$(dd if=$F bs=1 skip=$o count=1 status=none | od -An -tx1 | tr -d ' ')"; done
+```
+
+| Byte | After software reboot | After power-key hold | Meaning |
+|---|---|---|---|
+| `0x48` (`restart_reason`) | `00` | `00` | no reason code |
+| `0x50-0x53` (`rtc-offset`) | `3b d6 fd 69` | `00 00 00 00` | wiped by a cold reset (clock starts at 1970; rtc-sync refuses to store it) |
+| `0x5a-0x5b` | `92 0b` | `00 00` | wiped by a cold reset |
+| `0x5e-0x5f` | `fe 21` | `88 1a` | changes every boot; not a reason code |
+
+Result: power key vs PMIC watchdog is not distinguishable from Linux; warm vs cold is (rtc-offset wiped, or `erhai-rtc-sync: system clock is 1970` in the next boot's journal). Evidence: `~/gpu-lab-evidence/sdam0-after-reboot-*.txt`, `sdam0-after-powerkey-*.txt`.
 
 ### g0 control (package kernel; operator step, not run)
 
