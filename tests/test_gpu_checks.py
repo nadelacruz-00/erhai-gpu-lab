@@ -76,11 +76,13 @@ class GpuChecks(unittest.TestCase):
             self.assertRegex(r.stdout, rf"(?m)^PASS {cid} ", msg=cid)
         self.assertRegex(r.stdout, r"(?m)^INFO fuse speed_bin@0x138=2a000000")
         self.assertRegex(r.stdout, r"(?m)^INFO pon-reason PON_REASON=hard-reset")
+        self.assertRegex(r.stdout, r"(?m)^PASS gmu-genpd 3d37000\.gmu ")
+        self.assertNotIn("unrelated-warnings", r.stdout)
 
     def test_each_fail_fixture_fails_its_check(self):
         for cid in ["gxclkctl-bound", "gmu-genpd", "no-oops", "no-minus19", "no-gx-warn",
                     "renderer", "zap", "pstore", "probe", "pin-released", "shell-on-gpu",
-                    "runtime-suspends"]:
+                    "runtime-suspends", "gx-gdsc-summary", "hung-task", "dpm-watchdog"]:
             r = run_checks(f"fail-{cid}")
             self.assertEqual(r.returncode, 1, cid)
             self.assertRegex(r.stdout, rf"(?m)^FAIL {cid} ", msg=cid)
@@ -103,6 +105,34 @@ class GpuChecks(unittest.TestCase):
     def test_dpm_watchdog_naming_gpu_is_reported(self):
         r = run_checks("fail-dpm-gpu")
         self.assertRegex(r.stdout, r"(?m)^FAIL suspend-hang-gpu ")
+
+    def test_dpm_device_timeout_naming_gpu_fails(self):
+        for fx in ["fail-dpm-timeout", "fail-dpm-resume-gmu"]:
+            r = run_checks(fx)
+            self.assertRegex(r.stdout, r"(?m)^FAIL suspend-hang-gpu ", msg=fx)
+            self.assertEqual(r.stdout.count("FAIL"), 1, f"{fx}\n{r.stdout}")
+
+    def test_dpm_timeout_on_other_device_passes(self):
+        r = run_checks("dpm-non-gpu")  # display device; 3d00000xgpu (dot must be literal)
+        self.assertRegex(r.stdout, r"(?m)^PASS suspend-hang-gpu none")
+
+    def test_unrelated_warnings_are_info_not_fail(self):
+        r = run_checks("unrelated-warnings")  # real DSI-PHY + notifier WARN blocks
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertRegex(r.stdout, r"(?m)^PASS no-oops none")
+        self.assertRegex(r.stdout, r"(?m)^INFO unrelated-warnings 2$")
+
+    def test_gpu_warning_stack_fails_no_oops(self):
+        r = run_checks("fail-no-oops-gpu")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertRegex(r.stdout, r"(?m)^FAIL no-oops .*a6xx_gmu")
+        self.assertEqual(r.stdout.count("FAIL"), 1, r.stdout)
+
+    def test_gmu_genpd_found_at_any_gmu_address(self):
+        r = run_checks("gmu-genpd-3d6a000")
+        self.assertRegex(r.stdout, r"(?m)^PASS gmu-genpd 3d6a000\.gmu ")
+        r = run_checks("fail-gmu-genpd-3d6a000")
+        self.assertRegex(r.stdout, r"(?m)^FAIL gmu-genpd .*3d6a000\.gmu")
 
     def test_pin_mode_always_is_info(self):
         r = run_checks("pin-mode-always")  # rollback setting: no state file

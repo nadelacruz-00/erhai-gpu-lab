@@ -1,0 +1,17 @@
+[    1.0] ramoops: using 0x200000@0x9c000000
+[    1.1] pstore: Registered ramoops as persistent store backend
+[    5.0] msm_dpu ae01000.display-controller: bound
+[    5.2] adreno 3d00000.gpu: zap shader loaded
+[    5.3] [drm] Initialized msm 1.12.0 for 3d00000.gpu on minor 0
+[  120.0] ------------[ cut here ]------------
+[  120.0] WARNING: drivers/gpu/drm/msm/adreno/a6xx_gmu.c:1234 at a6xx_gmu_rpmh_off+0x1a0/0x1c0, CPU#3: kworker/3:1/88
+[  120.0] Modules linked in: gpucc_sm8750 qcom_q6v5_pas
+[  120.0] CPU: 3 UID: 0 PID: 88 Comm: kworker/3:1 Tainted: G        W           7.3.0-rc5 #1 PREEMPT
+[  120.0] pc : a6xx_gmu_rpmh_off+0x1a0/0x1c0
+[  120.0] x29: ffff80008102b630 x28: 0000000000000000 x27: 0000000000000000
+[  120.0] Call trace:
+[  120.0]  a6xx_gmu_rpmh_off+0x1a0/0x1c0 (P)
+[  120.0]  a6xx_gmu_stop+0x88/0x110
+[  120.0]  a6xx_gmu_pm_suspend+0x40/0x90
+[  120.0]  pm_generic_runtime_suspend+0x2c/0x48
+[  120.0] ---[ end trace 0000000000000000 ]---

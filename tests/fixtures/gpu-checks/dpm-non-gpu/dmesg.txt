@@ -1,0 +1,7 @@
+[    1.0] ramoops: using 0x200000@0x9c000000
+[    1.1] pstore: Registered ramoops as persistent store backend
+[    5.0] msm_dpu ae01000.display-controller: bound
+[    5.2] adreno 3d00000.gpu: zap shader loaded
+[    5.3] [drm] Initialized msm 1.12.0 for 3d00000.gpu on minor 0
+[  300.0] msm_dpu ae01000.display-controller: **** DPM device timeout after 30 seconds; 30 seconds until panic ****
+[  301.0] dpm_run_callback(): genpd_suspend_noirq returns -110 on 3d00000xgpu

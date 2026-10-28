@@ -1,0 +1,105 @@
+[    1.0] ramoops: using 0x200000@0x9c000000
+[    1.1] pstore: Registered ramoops as persistent store backend
+[    5.0] msm_dpu ae01000.display-controller: bound
+[    5.2] adreno 3d00000.gpu: zap shader loaded
+[    5.3] [drm] Initialized msm 1.12.0 for 3d00000.gpu on minor 0
+Oct 27 23:00:52 tabby-boi kernel: DSI PLL(0) lock failed, status=0x00000000
+Oct 27 23:00:52 tabby-boi kernel: PLL(0) lock failed
+Oct 27 23:00:52 tabby-boi kernel: ------------[ cut here ]------------
+Oct 27 23:00:52 tabby-boi kernel: dsi0_phy_pll_out_dsiclk already disabled
+Oct 27 23:00:52 tabby-boi kernel: WARNING: drivers/clk/clk.c:1257 at clk_core_disable+0x284/0x2c8, CPU#2: kworker/u33:5/99
+Oct 27 23:00:52 tabby-boi kernel: Modules linked in:
+Oct 27 23:00:52 tabby-boi kernel: CPU: 2 UID: 0 PID: 99 Comm: kworker/u33:5 Tainted: G        W           7.3.0-rc5-sm8750-themojoman-lab-43-pr-dual-pump #1 PREEMPT 
+Oct 27 23:00:52 tabby-boi kernel: Tainted: [W]=WARN
+Oct 27 23:00:52 tabby-boi kernel: Hardware name: OnePlus Pad 3/24976, BIOS 3.4 May 30 2026
+Oct 27 23:00:52 tabby-boi kernel: Workqueue: events_unbound deferred_probe_work_func
+Oct 27 23:00:52 tabby-boi kernel: pstate: 614000c5 (nZCv daIF +PAN -UAO -TCO +DIT -SSBS BTYPE=--)
+Oct 27 23:00:52 tabby-boi kernel: pc : clk_core_disable+0x284/0x2c8
+Oct 27 23:00:52 tabby-boi kernel: lr : clk_core_disable+0x284/0x2c8
+Oct 27 23:00:52 tabby-boi kernel: sp : ffff80008102b630
+Oct 27 23:00:52 tabby-boi kernel: x29: ffff80008102b630 x28: 0000000000000000 x27: 0000000000000000
+Oct 27 23:00:52 tabby-boi kernel: x26: 0000000000000000 x25: ffff000800b6d740 x24: ffffda8498b17a60
+Oct 27 23:00:52 tabby-boi kernel: x23: ffffda8498b17a60 x22: ffff000800b6d740 x21: ffff000801849400
+Oct 27 23:00:52 tabby-boi kernel: x20: 0000000000000000 x19: ffff000801849400 x18: 0000000000000006
+Oct 27 23:00:52 tabby-boi kernel: x17: 00000000ffffffff x16: ffff80008102afd8 x15: ffff80008102af20
+Oct 27 23:00:52 tabby-boi kernel: x14: 0000000000000000 x13: 64656c6261736964 x12: 2079646165726c61
+Oct 27 23:00:52 tabby-boi kernel: x11: 206b6c636973645f x10: ffff000b6da00000 x9 : ffffda8498063158
+Oct 27 23:00:52 tabby-boi kernel: x8 : 3ffffffffffbffff x7 : ffff000b6da00000 x6 : bffffffffffc0000
+Oct 27 23:00:52 tabby-boi kernel: x5 : 0000000000000271 x4 : 0000000000000000 x3 : 0000000000000000
+Oct 27 23:00:52 tabby-boi kernel: x2 : 0000000000000000 x1 : 0000000000000000 x0 : ffff000802bab0c0
+Oct 27 23:00:52 tabby-boi kernel: Call trace:
+Oct 27 23:00:52 tabby-boi kernel:  clk_core_disable+0x284/0x2c8 (P)
+Oct 27 23:00:52 tabby-boi kernel:  __clk_set_parent_after+0xa4/0x100
+Oct 27 23:00:52 tabby-boi kernel:  clk_core_reparent_orphans_nolock+0x88/0xd8
+Oct 27 23:00:52 tabby-boi kernel:  of_clk_add_hw_provider.part.0+0x98/0x140
+Oct 27 23:00:52 tabby-boi kernel:  devm_of_clk_add_hw_provider+0x9c/0x130
+Oct 27 23:00:52 tabby-boi kernel:  dsi_phy_driver_probe+0x2c0/0x3d0
+Oct 27 23:00:52 tabby-boi kernel:  platform_probe+0x64/0xa8
+Oct 27 23:00:52 tabby-boi kernel:  really_probe+0xc4/0x2b0
+Oct 27 23:00:52 tabby-boi kernel:  __driver_probe_device+0x174/0x1b0
+Oct 27 23:00:52 tabby-boi kernel:  driver_probe_device+0x44/0x128
+Oct 27 23:00:52 tabby-boi kernel:  __device_attach_driver+0xc0/0x128
+Oct 27 23:00:52 tabby-boi kernel:  bus_for_each_drv+0x90/0xf8
+Oct 27 23:00:52 tabby-boi kernel:  __device_attach+0xa8/0x1a0
+Oct 27 23:00:52 tabby-boi kernel:  device_initial_probe+0x58/0x68
+Oct 27 23:00:52 tabby-boi kernel:  bus_probe_device+0x40/0xb8
+Oct 27 23:00:52 tabby-boi kernel:  device_add+0x614/0x808
+Oct 27 23:00:52 tabby-boi kernel:  of_device_add+0x4c/0x70
+Oct 27 23:00:52 tabby-boi kernel:  of_platform_device_create_pdata+0x94/0x130
+Oct 27 23:00:52 tabby-boi kernel:  of_platform_bus_create+0x160/0x3b0
+Oct 27 23:00:52 tabby-boi kernel:  of_platform_populate+0x7c/0x118
+Oct 27 23:00:52 tabby-boi kernel:  mdss_probe+0x238/0x3b8
+Oct 27 23:00:52 tabby-boi kernel:  platform_probe+0x64/0xa8
+Oct 27 23:00:52 tabby-boi kernel:  really_probe+0xc4/0x2b0
+Oct 27 23:00:52 tabby-boi kernel:  __driver_probe_device+0x174/0x1b0
+Oct 27 23:00:52 tabby-boi kernel:  driver_probe_device+0x44/0x128
+Oct 27 23:00:52 tabby-boi kernel:  __device_attach_driver+0xc0/0x128
+Oct 27 23:00:52 tabby-boi kernel:  bus_for_each_drv+0x90/0xf8
+Oct 27 23:00:52 tabby-boi kernel:  __device_attach+0xa8/0x1a0
+Oct 27 23:00:52 tabby-boi kernel:  device_initial_probe+0x58/0x68
+Oct 27 23:00:52 tabby-boi kernel:  bus_probe_device+0x40/0xb8
+Oct 27 23:00:52 tabby-boi kernel:  deferred_probe_work_func+0x90/0xd0
+Oct 27 23:00:52 tabby-boi kernel:  process_one_work+0x190/0x500
+Oct 27 23:00:52 tabby-boi kernel:  worker_thread+0x194/0x328
+Oct 27 23:00:52 tabby-boi kernel:  kthread+0x138/0x150
+Oct 27 23:00:52 tabby-boi kernel:  ret_from_fork+0x10/0x20
+Oct 27 23:00:52 tabby-boi kernel: ---[ end trace 0000000000000000 ]---
+Oct 27 23:27:51 tabby-boi kernel: ------------[ cut here ]------------
+Oct 27 23:27:51 tabby-boi kernel: notifier callback qcom_pcie_wcn_l1ss_notify already registered
+Oct 27 23:27:51 tabby-boi kernel: WARNING: kernel/notifier.c:23 at notifier_chain_register+0x64/0x1a8, CPU#2: kworker/u33:7/101
+Oct 27 23:27:51 tabby-boi kernel: Modules linked in: hid_multitouch hid_generic sc1320cs cn3927 nft_reject_inet nf_reject_ipv4 nf_reject_ipv6 nft_reject nft_masq nft_chain_nat nf_nat nf_conntrack nf_defrag_ipv6 nf_defrag_ipv4 bridge stp llc nf_tables cnss2 cnss_utils cnss_prealloc cnss_plat_ipc_qmi_svc wlan_firmware_service mhi algif_hash algif_skcipher zram zsmalloc uinput cfg80211 binfmt_misc fastrpc rpmsg_ctrl rtc_pm8xxx gpio_shared_proxy nvmem_qcom_spmi_sdam qcom_stats qcom_iris videobuf2_dma_contig qcom_camss videobuf2_dma_sg sc820cs v4l2_mem2mem v4l2_cci videobuf2_memops sc8547a v4l2_fwnode videobuf2_v4l2 videobuf2_common v4l2_async videodev oplus_cps8601 i2c_qcom_cci mc qcom_q6v5_pas qcom_pil_info qcom_q6v5 gpucc_sm8750 qcom_common coresight_tmc coresight_stm stm_core qcom_cpucp_mbox coresight_cti coresight_funnel coresight ucsi_glink nvmem_reboot_mode joydev phy_qcom_qusb2 fuse
+Oct 27 23:27:51 tabby-boi kernel: CPU: 2 UID: 0 PID: 101 Comm: kworker/u33:7 Tainted: G        W           7.3.0-rc5-sm8750-themojoman-lab-43-pr-dual-pump #1 PREEMPT 
+Oct 27 23:27:51 tabby-boi kernel: Tainted: [W]=WARN
+Oct 27 23:27:51 tabby-boi kernel: Hardware name: OnePlus Pad 3/24976, BIOS 3.4 May 30 2026
+Oct 27 23:27:51 tabby-boi kernel: Workqueue: cnss_driver_event cnss_driver_event_work [cnss2]
+Oct 27 23:27:51 tabby-boi kernel: pstate: 61400005 (nZCv daif +PAN -UAO -TCO +DIT -SSBS BTYPE=--)
+Oct 27 23:27:51 tabby-boi kernel: pc : notifier_chain_register+0x64/0x1a8
+Oct 27 23:27:51 tabby-boi kernel: lr : notifier_chain_register+0x64/0x1a8
+Oct 27 23:27:51 tabby-boi kernel: sp : ffff80008103ba20
+Oct 27 23:27:51 tabby-boi kernel: x29: ffff80008103ba20 x28: ffff0008012f5c10 x27: ffff800083510824
+Oct 27 23:27:51 tabby-boi kernel: x26: ffff0008012f5c10 x25: 0000000000000004 x24: 0000000080000009
+Oct 27 23:27:51 tabby-boi kernel: x23: ffffda849b2e2440 x22: ffff800082942c48 x21: a6c6da8498a8e2d0
+Oct 27 23:27:51 tabby-boi kernel: x20: ffff000807a73db0 x19: ffff0008012820e8 x18: 0000000000000008
+Oct 27 23:27:51 tabby-boi kernel: x17: 303030303878303d x16: 7265746661204749 x15: 464e4f435f415453
+Oct 27 23:27:51 tabby-boi kernel: x14: 45435f4652415020 x13: 6465726574736967 x12: 6572207964616572
+Oct 27 23:27:51 tabby-boi kernel: x11: ffffda8499df0000 x10: ffff000b6da24e28 x9 : ffffda8498063158
+Oct 27 23:27:51 tabby-boi kernel: x8 : 3ffffffffffbffff x7 : ffff000b6da00000 x6 : 0000000000001897
+Oct 27 23:27:51 tabby-boi kernel: x5 : ffff000b7e0f11c8 x4 : 7ffffffffffc1897 x3 : ffff2586e3c7a000
+Oct 27 23:27:51 tabby-boi kernel: x2 : 0000000000000000 x1 : 0000000000000000 x0 : ffff000800a84100
+Oct 27 23:27:51 tabby-boi kernel: Call trace:
+Oct 27 23:27:51 tabby-boi kernel:  notifier_chain_register+0x64/0x1a8 (P)
+Oct 27 23:27:51 tabby-boi kernel:  blocking_notifier_chain_register+0x40/0x88
+Oct 27 23:27:51 tabby-boi kernel:  bus_register_notifier+0x34/0x68
+Oct 27 23:27:51 tabby-boi kernel:  qcom_pcie_init_2_7_0+0x978/0x19a8
+Oct 27 23:27:51 tabby-boi kernel:  qcom_pcie_host_init+0xa0/0x4b0
+Oct 27 23:27:51 tabby-boi kernel:  dw_pcie_resume_noirq+0x44/0x138
+Oct 27 23:27:51 tabby-boi kernel:  qcom_pcie_wcn_set_link+0x15c/0x318
+Oct 27 23:27:51 tabby-boi kernel:  cnss_resume_pci_link+0x48/0x238 [cnss2]
+Oct 27 23:27:51 tabby-boi kernel:  cnss_pci_dev_powerup+0xb8/0x8b8 [cnss2]
+Oct 27 23:27:51 tabby-boi kernel:  cnss_bus_dev_powerup+0x28/0xa8 [cnss2]
+Oct 27 23:27:51 tabby-boi kernel:  cnss_driver_event_work+0x638/0x1c98 [cnss2]
+Oct 27 23:27:51 tabby-boi kernel:  process_one_work+0x190/0x500
+Oct 27 23:27:51 tabby-boi kernel:  worker_thread+0x194/0x328
+Oct 27 23:27:51 tabby-boi kernel:  kthread+0x138/0x150
+Oct 27 23:27:51 tabby-boi kernel:  ret_from_fork+0x10/0x20
+Oct 27 23:27:51 tabby-boi kernel: ---[ end trace 0000000000000000 ]---

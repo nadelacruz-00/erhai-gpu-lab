@@ -18,6 +18,11 @@ PIN_CONF=${PIN_CONF:-/etc/erhai/gpu-pin.conf}
 SUSPEND_WAIT=${SUSPEND_WAIT:-60}
 PON_REASON_PATH=${PON_REASON_PATH:-}
 GPU_DEV=3d00000.gpu
+GPU_DEV_RE='3d00000\.gpu'
+# Devices whose PM callbacks are this work's: the GPU, any GMU, gxclkctl.
+GPU_PM_DEV_RE='3d00000\.gpu|[0-9a-f]+\.gmu|3d64000\.clock-controller|gxclkctl'
+# A WARNING/Call-trace block naming one of these is GPU-attributed.
+GPU_STACK_RE='a6xx_|a8xx_|adreno|msm_gpu|gdsc|gxclkctl|gmu'
 GPU_DIR=$SYSROOT/sys/devices/platform/soc@0/$GPU_DEV
 
 failed=0
@@ -53,11 +58,19 @@ check_gxclkctl_bound() {
     verdict gxclkctl-bound "$d" "driver=${d:-none}" [ "$d" = gxclkctl-kaanapali ]
 }
 check_gmu_genpd() {
-    local n=0 i
-    for i in 0 1; do
-        [ -n "$(find "$SYSROOT/sys/devices" -name "genpd:$i:3d37000.gmu" 2>/dev/null | head -1)" ] && n=$((n + 1))
-    done
-    verdict gmu-genpd "genpd:0,genpd:1" "found $n of 2 genpd:{0,1}:3d37000.gmu" [ "$n" = 2 ]
+    local p dev seen=
+    while IFS= read -r p; do
+        dev=${p##*/genpd:0:}
+        seen="$seen${seen:+,}$dev"
+        if [ -n "$(find "$SYSROOT/sys/devices" -name "genpd:1:$dev" 2>/dev/null | head -1)" ]; then
+            report PASS gmu-genpd "$dev genpd:0,genpd:1"; return
+        fi
+    done < <(find "$SYSROOT/sys/devices" -name 'genpd:0:*.gmu' 2>/dev/null | sort)
+    if [ -n "$seen" ]; then
+        report FAIL gmu-genpd "genpd:1 missing for ${seen}"
+    else
+        report FAIL gmu-genpd "no genpd:0:*.gmu"
+    fi
 }
 check_gx_gdsc() {
     local s
@@ -70,10 +83,57 @@ check_gx_gdsc() {
     verdict gx-gdsc-summary gx_clkctl_gx_gdsc "gx_clkctl_gx_gdsc not in pm_genpd_summary" \
         grep -q gx_clkctl_gx_gdsc <<<"$s"
 }
+# Scan dmesg for oopses and WARNING/Call-trace blocks. Prints "FATAL <line>"
+# (Oops/BUG), "GPU <header>" (a block whose header or stack names the GPU) and
+# "UNRELATED <count>". A block runs from "[ cut here ]", "WARNING:" or "Call
+# trace:" to "---[ end trace" or, after its stack, the first non-indented line.
+# "Modules linked in:" and register dumps are not searched.
+scan_traces() {
+    awk -v gre="$GPU_STACK_RE" '
+    function close_block() {
+        if (!inb) return
+        if (buf ~ gre) { if (gpu == "") gpu = hdr } else n++
+        inb = 0; stk = 0; warned = 0; buf = ""; hdr = ""
+    }
+    {
+        m = $0
+        sub(/^\[ *[0-9.]+\] /, "", m)
+        sub(/^[A-Z][a-z][a-z] +[0-9]+ [0-9:]+ [^ ]+ kernel: /, "", m)
+        sub(/^[0-9T:.+-]+ [^ ]+ kernel: /, "", m)
+    }
+    m ~ /Oops|Unable to handle kernel|Internal error|BUG:/ { if (fatal == "") fatal = m }
+    inb && stk && m !~ /^ / && m !~ /end trace/ { close_block() }
+    m ~ /\[ cut here \]/ { close_block(); inb = 1; next }
+    m ~ /^WARNING:/ && warned { close_block() }
+    m ~ /^WARNING:|Call [Tt]race:/ && !inb { inb = 1 }
+    inb {
+        if (m ~ /^WARNING:/) { hdr = m; warned = 1 } else if (hdr == "") hdr = m
+        if (m ~ /Call [Tt]race:/) stk = 1
+        if (m !~ /^Modules linked in:/ && m !~ /(^| )x[0-9]+ *: [0-9a-f]+/) buf = buf "\n" m
+    }
+    m ~ /---\[ end trace/ { close_block() }
+    END {
+        close_block()
+        if (fatal != "") print "FATAL " fatal
+        if (gpu != "") print "GPU " gpu
+        print "UNRELATED " n + 0
+    }' <<<"$DMESG"
+}
 check_no_oops() {
     dmesg_needed no-oops && return
-    local l; l=$(grep -Em1 'Oops|Call [Tt]race' <<<"$DMESG")
-    verdict no-oops none "$l" [ -z "$l" ]
+    local out fatal gpu n
+    out=$(scan_traces)
+    fatal=$(sed -n 's/^FATAL //p' <<<"$out")
+    gpu=$(sed -n 's/^GPU //p' <<<"$out")
+    n=$(sed -n 's/^UNRELATED //p' <<<"$out")
+    if [ -n "$fatal" ]; then
+        report FAIL no-oops "$fatal"
+    elif [ -n "$gpu" ]; then
+        report FAIL no-oops "gpu warning: $gpu"
+    else
+        report PASS no-oops none
+    fi
+    if [ "${n:-0}" -gt 0 ]; then report INFO unrelated-warnings "$n"; fi
 }
 check_no_minus19() {
     dmesg_needed no-minus19 && return
@@ -125,7 +185,8 @@ check_pon_reason() {
 check_suspend_hang_gpu() {
     dmesg_needed suspend-hang-gpu && return
     local l
-    l=$(grep -E 'dpm_run_callback|DPM watchdog|dpm_watchdog' <<<"$DMESG" | grep -Em1 "$GPU_DEV|3d37000.gmu|gxclkctl")
+    l=$(grep -E 'dpm_run_callback|DPM watchdog|dpm_watchdog|DPM device timeout|failed to (suspend|resume)' <<<"$DMESG" |
+        grep -Em1 "(^|[ :])($GPU_PM_DEV_RE)([ :]|$)")
     verdict suspend-hang-gpu none "$l" [ -z "$l" ]
 }
 check_probe() {
@@ -207,8 +268,8 @@ cycles() {
     fi
     if [ ! -r "$rep" ]; then echo "cycles: trace report unreadable: $rep" >&2; exit 1; fi
     # rpm tracepoints print "<dev> flags-.." (accept "name=<dev>" too)
-    s=$(grep -Ec "rpm_suspend: (name=)?$GPU_DEV( |$)" "$rep")
-    r=$(grep -Ec "rpm_resume: (name=)?$GPU_DEV( |$)" "$rep")
+    s=$(grep -Ec "rpm_suspend: (name=)?$GPU_DEV_RE( |$)" "$rep")
+    r=$(grep -Ec "rpm_resume: (name=)?$GPU_DEV_RE( |$)" "$rep")
     s=${s:-0}; r=${r:-0}
     echo "cycles=$(( s < r ? s : r )) suspend=$s resume=$r"
 }
