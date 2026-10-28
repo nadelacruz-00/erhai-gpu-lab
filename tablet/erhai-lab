@@ -15,6 +15,8 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
   status              whoami, MODE, queue, recent boots and evidence
   setup               (root) install the g1 tools via the installed setup.sh and
                       build the pinned IGT msm_recovery under /var/lib/erhai-gpu/igt
+  power [--minutes N] (root) sample the battery V*I while idle on battery and compare
+                      the average with the 3639 mW baseline (default 30 minutes)
 
 Rungs, experiments and their numbers are described in docs/ladder.md.
 """
@@ -31,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO = "nadelacruz-00/erhai-gpu-lab"
@@ -40,6 +43,8 @@ PROC_CMDLINE = Path("/proc/cmdline")
 LIB_DIR = Path("/usr/local/lib/erhai-gpu-lab")
 STATE_DIR = Path("/var/lib/erhai-gpu")
 PIN_CONF = Path("/etc/erhai/gpu-pin.conf")
+BATTERY = Path("/sys/class/power_supply/erhai-adsp-bat")
+PROC_BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 
 
 class LabError(Exception):
@@ -568,6 +573,77 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+# ----------------------------------------------------------------- power ---
+
+BASELINE_MW = 3639      # package kernel, MODE=once, 2026-10-28
+POWER_INTERVAL_S = 10
+
+
+def avg_discharge_mw(samples: list[tuple[int, int, int]]) -> float:
+    """Mean battery power in mW of (epoch, voltage uV, current uA) samples.
+
+    Current is negative while discharging; a sample at >= 0 means a charger
+    (or no load) and the measurement is meaningless."""
+    if not samples:
+        raise LabError("no power samples")
+    for epoch, _, current in samples:
+        if current >= 0:
+            raise LabError(f"charger connected (current_now >= 0 at {epoch}); "
+                           "unplug and rerun")
+    return sum(v * -i / 1e9 for _, v, i in samples) / len(samples)
+
+
+def format_samples(samples: list[tuple[int, int, int]]) -> str:
+    """`<epoch> <uV> <uA>` lines, the format of the idle-baseline evidence."""
+    return "".join(f"{e} {v} {i}\n" for e, v, i in samples)
+
+
+def sample_battery(count: int, battery: Path = BATTERY, sleep=time.sleep,
+                   clock=lambda: int(time.time())) -> list[tuple[int, int, int]]:
+    """Read voltage_now/current_now `count` times, POWER_INTERVAL_S apart.
+
+    The epoch is only a label for the refusal message; nothing keys on it."""
+    samples = []
+    for n in range(count):
+        if n:
+            sleep(POWER_INTERVAL_S)
+        try:
+            v = int((battery / "voltage_now").read_text())
+            i = int((battery / "current_now").read_text())
+        except (OSError, ValueError) as e:
+            raise LabError(f"cannot read {battery}: {e}") from e
+        samples.append((clock(), v, i))
+    return samples
+
+
+def cmd_power(args: argparse.Namespace) -> int:
+    require_root("power")
+    if args.minutes < 0:
+        raise LabError("--minutes must not be negative")
+    kver = os.uname().release
+    try:
+        boot_id = PROC_BOOT_ID.read_text().strip()
+    except OSError as e:
+        raise LabError(f"cannot read {PROC_BOOT_ID}: {e}") from e
+    count = args.minutes * 60 // POWER_INTERVAL_S
+    print("Method: unplug the charger, screen on at a fixed brightness, Wi-Fi on, "
+          "no apps running.")
+    print(f"Sampling every {POWER_INTERVAL_S} s for {args.minutes} min ({count} samples)...",
+          flush=True)
+    samples = sample_battery(count)
+    avg = avg_discharge_mw(samples)
+    out = STATE_DIR / f"power-{kver}-{boot_id[:8]}.txt"
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        out.write_text(format_samples(samples))
+    except OSError as e:
+        raise LabError(f"cannot write {out}: {e}") from e
+    print(f"avg={avg:.0f} mW over {len(samples)} samples; baseline {BASELINE_MW} mW; "
+          f"candidate <= baseline: {'yes' if avg <= BASELINE_MW else 'no'}")
+    print(f"samples: {out}")
+    return 0
+
+
 # ------------------------------------------------------------------- cli ---
 
 def require_root(what: str) -> None:
@@ -603,6 +679,10 @@ def build_parser() -> argparse.ArgumentParser:
                    ).set_defaults(func=cmd_boot_run)
     sub.add_parser("status", help="mode, queue, recent boots and evidence"
                    ).set_defaults(func=cmd_status)
+    w = sub.add_parser("power", help="idle power vs the 3639 mW baseline (root)")
+    w.add_argument("--minutes", type=int, default=30,
+                   help="sampling duration (default: 30; one sample every 10 s)")
+    w.set_defaults(func=cmd_power)
     return p
 
 
