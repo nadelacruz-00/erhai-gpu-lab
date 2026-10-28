@@ -1,0 +1,4 @@
+kernel: Linux version 7.3.0-rc5-sm8750-themojoman-lab-43-pr-dual-pump
+systemd[1]: Started systemd-journald.service - Journal Service.
+erhai-rtc-sync: system clock 2026-10-28 14:02:11 stored
+systemd[1]: Reached target basic.target - Basic System.

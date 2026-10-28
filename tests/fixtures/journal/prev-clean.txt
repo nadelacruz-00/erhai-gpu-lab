@@ -1,0 +1,10 @@
+systemd-journald[412]: Received client request to flush runtime journal.
+Stopping session-3.scope - Session 3 of User nadelacruz...
+Reached target shutdown.target - System Shutdown.
+Reached target final.target - Late Shutdown Services.
+systemd-shutdown[1]: Syncing filesystems and block devices.
+systemd-shutdown[1]: Sending SIGTERM to remaining processes...
+Syncing filesystems and block devices.
+Sending SIGTERM to remaining processes...
+Received SIGTERM from PID 1 (systemd-shutdow).
+Journal stopped

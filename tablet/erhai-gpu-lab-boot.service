@@ -1,0 +1,12 @@
+[Unit]
+Description=erhai GPU lab: log this boot and run the queued g0 check
+After=graphical.target erhai-gpu-pin-once.service time-sync.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/erhai-gpu-lab boot-run
+# g0 waits up to SETTLE+TIMEOUT = 195 s for the pin, plus SUSPEND_WAIT 60 s
+TimeoutStartSec=600
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,5 @@
+kernel: msm_dpu ae01000.display-controller: [drm] vblank wait timed out
+erhai-gpu-pin: pinned 3d00000.gpu power/control=on
+systemd[1]: Started session-3.scope - Session 3 of User nadelacruz.
+kernel: adreno 3d00000.gpu: [drm:a6xx_hfi_send_msg] *ERROR* GMU timeout
+kernel: adreno 3d00000.gpu: [drm:a6xx_gmu_set_oob] *ERROR* Timeout waiting for GMU OOB set

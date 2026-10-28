@@ -8,6 +8,11 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
                       UKI/modules kernelrelease, install it beside the package
                       kernel (/boot/<kver>.efi + /usr/lib/modules/<kver>/)
   whoami              print the booted kernel's lab candidate, build and stack
+  queue <label> --expect <cand|package>
+                      (root) queue a g0 check for the next boot of that kernel
+  boot-run            (root, boot service) log this boot, run the queued g0 if the
+                      expected kernel booted
+  status              whoami, MODE, queue, recent boots and evidence
   setup               (root) install the g1 tools via the installed setup.sh and
                       build the pinned IGT msm_recovery under /var/lib/erhai-gpu/igt
 
@@ -229,14 +234,17 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_whoami(args: argparse.Namespace) -> int:
+def whoami_line() -> str:
     cand, build, stack = lab_identity(PROC_CMDLINE.read_text())
     kver = os.uname().release
     if cand:
-        print(f"{kver}: lab candidate {cand}, build {build or '?'}"
-              + (f", stack={stack}" if stack else ""))
-    else:
-        print(f"{kver}: package kernel (not a lab build)")
+        return (f"{kver}: lab candidate {cand}, build {build or '?'}"
+                + (f", stack={stack}" if stack else ""))
+    return f"{kver}: package kernel (not a lab build)"
+
+
+def cmd_whoami(args: argparse.Namespace) -> int:
+    print(whoami_line())
     return 0
 
 
@@ -344,6 +352,200 @@ def cmd_mode(args: argparse.Namespace) -> int:
     return 0
 
 
+# ------------------------------------------------------------ boot log ---
+
+BOOTS_LOG = "boots.log"
+QUEUE_FILE = "queue.json"
+PSTORE_DIR = Path("/sys/fs/pstore")
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+_LABEL_RE = re.compile(r"^g[0-9]+[a-z0-9-]*$")
+
+
+def classify_prev_boot(prev_tail: str | None, cur_journal: str) -> str:
+    """How the previous boot ended: none, clean, cold or warm.
+
+    clean: its journal ends with 'Journal stopped'. Otherwise cold if this boot's
+    clock started at 1970 (PMIC watchdog or power key, indistinguishable), else
+    warm (expect a pstore record)."""
+    if prev_tail is None:
+        return "none"
+    if prev_tail.rstrip().endswith("Journal stopped"):
+        return "clean"
+    if "erhai-rtc-sync: system clock is 1970" in cur_journal:
+        return "cold"
+    return "warm"
+
+
+def parse_boots(text: str) -> list[dict[str, str]]:
+    """boots.log text -> one dict of key=value pairs per line."""
+    recs = []
+    for line in text.splitlines():
+        rec = dict(w.split("=", 1) for w in line.split() if "=" in w)
+        if rec:
+            recs.append(rec)
+    return recs
+
+
+def queue_matches(expect: str, cand: str) -> bool:
+    """expect is a candidate name or 'package'; cand is 'package' or a candidate."""
+    return expect == cand
+
+
+def write_queue(state: Path, label: str, expect: str) -> None:
+    if not _LABEL_RE.match(label):
+        raise LabError(f"bad rung label {label!r}; expected e.g. g0")
+    if label != "g0":
+        raise LabError("only g0 runs at boot")
+    if not expect or expect.split() != [expect]:
+        raise LabError("--expect needs a candidate name or 'package'")
+    state.mkdir(parents=True, exist_ok=True)
+    tmp = state / (QUEUE_FILE + ".tmp")
+    tmp.write_text(json.dumps({"label": label, "expect": expect}) + "\n")
+    os.replace(tmp, state / QUEUE_FILE)
+
+
+def read_queue(state: Path) -> dict | None:
+    path = state / QUEUE_FILE
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise LabError(f"cannot read {path}: {e}") from e
+    try:
+        q = json.loads(text)
+        if not isinstance(q["label"], str) or not isinstance(q["expect"], str):
+            raise TypeError
+    except (ValueError, KeyError, TypeError) as e:
+        raise LabError(f"{path} is not a valid queue; remove it") from e
+    return q
+
+
+def _verdict(path: Path) -> str:
+    lines = path.read_text(errors="replace").splitlines()
+    return "FAIL" if any(line.startswith("FAIL ") for line in lines) else "PASS"
+
+
+def boot_run(state: Path, ident: dict, prev_tail: str | None, cur_journal: str,
+             pstore_n: int, run_g0) -> str:
+    """Log this boot; run the queued g0 if the expected kernel booted.
+
+    ident keys: boot_id, kver, cand ('package' or a candidate), build, stack, mode.
+    run_g0(out_path) appends the checker's output to out_path."""
+    prev = classify_prev_boot(prev_tail, cur_journal)
+    state.mkdir(parents=True, exist_ok=True)
+    with open(state / BOOTS_LOG, "a") as f:
+        f.write(f"boot={ident['boot_id']} kver={ident['kver']} cand={ident['cand']} "
+                f"build={ident['build']} mode={ident['mode']} prev={prev} "
+                f"pstore={pstore_n}\n")
+    q = read_queue(state)
+    if q is None:
+        return "logged"
+    if not queue_matches(q["expect"], ident["cand"]):
+        return (f"queued {q['label']} expects {q['expect']}, "
+                f"booted {ident['cand']}; kept")
+    if q["label"] != "g0":
+        raise LabError("only g0 runs at boot")
+    out = state / f"{q['label']}-{ident['kver']}-{ident['boot_id'][:8]}.txt"
+    out.write_text(f"# kver={ident['kver']} cand={ident['cand']} build={ident['build']} "
+                   f"stack={ident['stack']} mode={ident['mode']} prev={prev}\n")
+    run_g0(out)
+    verdict = _verdict(out)
+    (state / QUEUE_FILE).unlink()
+    return f"ran {q['label']} -> {out} ({verdict})"
+
+
+def _journal(*args: str) -> str | None:
+    """journalctl stdout, or None if it fails or prints nothing."""
+    try:
+        r = subprocess.run(["journalctl", *args, "-o", "cat"], capture_output=True,
+                           text=True, errors="replace")
+    except OSError:
+        return None
+    return r.stdout if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _gather_ident() -> dict:
+    cand, build, stack = lab_identity(PROC_CMDLINE.read_text())
+    try:
+        mode = read_mode(PIN_CONF.read_text())
+    except (OSError, LabError):
+        mode = "?"
+    return {"boot_id": BOOT_ID_PATH.read_text().strip().replace("-", ""),
+            "kver": os.uname().release, "cand": cand or "package",
+            "build": build or "-", "stack": stack or "-", "mode": mode}
+
+
+def _run_g0(out: Path) -> None:
+    """Append gpu-checks.sh g0 output to out; g0 exits 1 on any FAIL, which is fine."""
+    checks = helper("gpu-checks.sh")
+    with open(out, "a") as f:
+        subprocess.run([str(checks), "g0"], stdout=f, stderr=subprocess.STDOUT)
+
+
+def cmd_boot_run(args: argparse.Namespace) -> int:
+    require_root("boot-run")
+    try:
+        try:
+            pstore_n = len(list(PSTORE_DIR.iterdir()))
+        except OSError:
+            pstore_n = 0
+        msg = boot_run(STATE_DIR, _gather_ident(), _journal("-b", "-1", "-n", "20"),
+                       _journal("-b") or "", pstore_n, _run_g0)
+    except Exception as e:  # noqa: BLE001 -- reported once, never retried
+        print(f"erhai-lab: boot-run: {e}", file=sys.stderr)
+        return 1
+    print(msg)
+    return 0
+
+
+def cmd_queue(args: argparse.Namespace) -> int:
+    require_root("queue")
+    write_queue(STATE_DIR, args.label, args.expect)
+    where = "the package kernel" if args.expect == "package" else f"lab kernel {args.expect}"
+    print(f"queued {args.label}; it runs at the next boot of {where}")
+    return 0
+
+
+def status_report(state: Path, whoami: str, mode: str) -> str:
+    out = [whoami, f"MODE={mode}"]
+    try:
+        q = read_queue(state)
+    except LabError as e:
+        out.append(f"queue: unreadable ({e})")
+    else:
+        out.append("queue: none" if q is None else f"queue: {q['label']} expects {q['expect']}")
+    try:
+        boots = (state / BOOTS_LOG).read_text().splitlines()
+    except OSError:
+        boots = []
+    out.append("last boots:")
+    out += [f"  {line}" for line in boots[-5:]] or ["  no boots logged"]
+    files = []
+    if state.is_dir():
+        for pat in ("g*-*.txt", "power-*.txt"):
+            files += [p for p in state.glob(pat) if p.is_file()]
+    files = sorted(set(files), key=lambda p: (p.stat().st_mtime, p.name), reverse=True)[:5]
+    out.append("evidence:")
+    for p in files:
+        lines = p.read_text(errors="replace").splitlines()
+        npass = sum(1 for line in lines if line.startswith("PASS "))
+        nfail = sum(1 for line in lines if line.startswith("FAIL "))
+        out.append(f"  {p.name}  PASS={npass} FAIL={nfail}")
+    if not files:
+        out.append("  none")
+    return "\n".join(out)
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    try:
+        mode = read_mode(PIN_CONF.read_text())
+    except (OSError, LabError):
+        mode = "?"
+    print(status_report(STATE_DIR, whoami_line(), mode))
+    return 0
+
+
 # ------------------------------------------------------------------- cli ---
 
 def require_root(what: str) -> None:
@@ -370,6 +572,15 @@ def build_parser() -> argparse.ArgumentParser:
     m = sub.add_parser("mode", help="set the GPU pin policy and its services (root)")
     m.add_argument("mode", choices=MODES)
     m.set_defaults(func=cmd_mode)
+    q = sub.add_parser("queue", help="queue a g0 check for the next boot (root)")
+    q.add_argument("label")
+    q.add_argument("--expect", required=True, metavar="CAND|package",
+                   help="kernel that must be booted for the rung to run")
+    q.set_defaults(func=cmd_queue)
+    sub.add_parser("boot-run", help="log this boot, run the queued g0 (root, boot service)"
+                   ).set_defaults(func=cmd_boot_run)
+    sub.add_parser("status", help="mode, queue, recent boots and evidence"
+                   ).set_defaults(func=cmd_status)
     return p
 
 
