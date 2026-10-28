@@ -632,10 +632,17 @@ def last_nonempty(lines) -> str:
     return last
 
 
-def g1_summary_text(kver: str, cand: str, control: str, plan: list[str],
-                    lines: list[str], passed: bool) -> str:
-    head = f"# kver={kver} cand={cand} control={control} plan={','.join(plan)}"
-    return "\n".join([head, *lines, "RESULT PASS" if passed else "RESULT FAIL"]) + "\n"
+def g1_header(kver: str, cand: str, control: str, plan: list[str]) -> str:
+    return f"# kver={kver} cand={cand} control={control} plan={','.join(plan)}"
+
+
+def g1_result_line(sub: str, rc: int, last: str) -> str:
+    """The summary line for one run, never blank and never silently rc-less."""
+    if not last:
+        return f"FAIL g1 {sub} (no result line, rc={rc})"
+    if rc != 0 and last.startswith("PASS"):
+        return f"{last} (rc={rc})"
+    return last
 
 
 def g1_confirm(readline) -> None:
@@ -646,14 +653,24 @@ def g1_confirm(readline) -> None:
 
 
 def run_one(sub: str) -> tuple[int, str]:
-    """One igt-recovery run: stdout echoed live and captured, stderr passed through."""
-    proc = subprocess.Popen([str(helper("igt-recovery")), "run", sub],
-                            stdout=subprocess.PIPE, text=True, errors="replace")
+    """One igt-recovery run: stdout echoed live and captured, stderr passed through.
+
+    Returns the exit code and the summary line (the wrapper's last non-empty line)."""
     seen = []
-    for line in proc.stdout:
-        print(line, end="", flush=True)
-        seen.append(line)
-    return proc.wait(), last_nonempty(seen)
+    with subprocess.Popen([str(helper("igt-recovery")), "run", sub],
+                          stdout=subprocess.PIPE, text=True, errors="replace") as proc:
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            seen.append(line)
+        rc = proc.wait()
+    return rc, g1_result_line(sub, rc, last_nonempty(seen))
+
+
+def _append_durable(f, text: str) -> None:
+    """Write and force to disk: a frozen kernel must not lose finished runs."""
+    f.write(text)
+    f.flush()
+    os.fsync(f.fileno())
 
 
 def cmd_g1(args: argparse.Namespace) -> int:
@@ -672,13 +689,27 @@ def cmd_g1(args: argparse.Namespace) -> int:
         raise LabError("power/control is on; pass --pinned for the MODE=always run")
     if not args.yes:
         g1_confirm(sys.stdin.readline)
-    passed, lines = run_g1(plan, control, args.pinned, run_one, time.sleep)
     out = STATE_DIR / f"g1-summary-{kver}-{boot_id[:8]}.txt"
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        out.write_text(g1_summary_text(kver, cand, control, plan, lines, passed))
+        f = open(out, "w")
     except OSError as e:
         raise LabError(f"cannot write {out}: {e}") from e
+    # Header first and each run's line as it finishes, fsynced: a summary with
+    # no RESULT line means the kernel froze or the run was interrupted.
+    with f:
+        try:
+            _append_durable(f, g1_header(kver, cand, control, plan) + "\n")
+
+            def recorded(sub: str) -> tuple[int, str]:
+                rc, line = run_one(sub)
+                _append_durable(f, line + "\n")
+                return rc, line
+
+            passed, lines = run_g1(plan, control, args.pinned, recorded, time.sleep)
+            _append_durable(f, "RESULT PASS\n" if passed else "RESULT FAIL\n")
+        except OSError as e:
+            raise LabError(f"cannot write {out}: {e}") from e
     print(f"g1: {'PASS' if passed else 'FAIL'} ({len(lines)}/{len(plan)} runs); summary: {out}")
     return 0 if passed else 1
 

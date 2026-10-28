@@ -86,16 +86,22 @@ class LastLineTest(unittest.TestCase):
 
 
 class SummaryTest(unittest.TestCase):
-    def test_summary_text(self):
-        text = lab.g1_summary_text("7.3.0-lab", "cand-a", "auto",
-                                   ["gpu-fault", "hangcheck"],
-                                   ["PASS g1 gpu-fault", "PASS g1 hangcheck"], True)
-        self.assertEqual(text.splitlines(), [
-            "# kver=7.3.0-lab cand=cand-a control=auto plan=gpu-fault,hangcheck",
-            "PASS g1 gpu-fault", "PASS g1 hangcheck", "RESULT PASS"])
-        fail = lab.g1_summary_text("k", "package", "on", ["gpu-fault"],
-                                   ["FAIL g1 gpu-fault (x)"], False)
-        self.assertEqual(fail.splitlines()[-1], "RESULT FAIL")
+    def test_header(self):
+        self.assertEqual(lab.g1_header("7.3.0-lab", "cand-a", "auto",
+                                       ["gpu-fault", "hangcheck"]),
+                         "# kver=7.3.0-lab cand=cand-a control=auto plan=gpu-fault,hangcheck")
+
+    def test_result_line_no_output(self):
+        self.assertEqual(lab.g1_result_line("gpu-fault", 2, ""),
+                         "FAIL g1 gpu-fault (no result line, rc=2)")
+
+    def test_result_line_pass_with_bad_rc(self):
+        self.assertEqual(lab.g1_result_line("gpu-fault", 1, "PASS g1 gpu-fault"),
+                         "PASS g1 gpu-fault (rc=1)")
+
+    def test_result_line_passthrough(self):
+        self.assertEqual(lab.g1_result_line("x", 0, "PASS g1 x"), "PASS g1 x")
+        self.assertEqual(lab.g1_result_line("x", 1, "FAIL g1 x (bad)"), "FAIL g1 x (bad)")
 
 
 class ConfirmTest(unittest.TestCase):
@@ -129,16 +135,24 @@ class RunOneTest(unittest.TestCase):
             self.assertIn("igt-recovery: run start", out.getvalue())
 
 
+class RunOneNoLineTest(unittest.TestCase):
+    def test_run_one_records_missing_result_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / "igt-recovery"
+            fake.write_text("#!/bin/sh\nexit 2\n")
+            fake.chmod(0o755)
+            with mock.patch.object(lab, "helper", return_value=fake), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                rc, last = lab.run_one("gpu-fault")
+            self.assertEqual((rc, last), (2, "FAIL g1 gpu-fault (no result line, rc=2)"))
+
+
 class CmdG1Test(unittest.TestCase):
     def args(self, *argv):
         return lab.build_parser().parse_args(["g1", *argv])
 
-    def test_cmd_g1_needs_root(self):
-        with mock.patch.object(lab.os, "geteuid", return_value=1000):
-            with self.assertRaisesRegex(lab.LabError, "needs root"):
-                lab.cmd_g1(self.args("--yes"))
-
-    def test_cmd_g1_writes_summary_and_exit_code(self):
+    @contextlib.contextmanager
+    def env(self, run_one):
         with tempfile.TemporaryDirectory() as d:
             boot = Path(d) / "boot_id"
             boot.write_text("12345678-aaaa-bbbb-cccc-dddddddddddd\n")
@@ -154,17 +168,59 @@ class CmdG1Test(unittest.TestCase):
                  mock.patch.object(lab.os, "uname",
                                    return_value=mock.Mock(release="7.3.0-lab")), \
                  mock.patch.object(lab, "helper", return_value=Path("/x/igt-recovery")), \
-                 mock.patch.object(lab, "run_one",
-                                   side_effect=[(0, "PASS g1 gpu-fault"),
-                                                (1, "FAIL g1 gpu-fault (x)")]), \
+                 mock.patch.object(lab, "run_one", run_one), \
                  mock.patch.object(lab.time, "sleep"), \
                  contextlib.redirect_stdout(io.StringIO()):
-                rc = lab.cmd_g1(self.args("--yes", "--runs", "3", "--hangcheck", "0"))
+                yield Path(d) / "g1-summary-7.3.0-lab-12345678.txt"
+
+    def test_cmd_g1_needs_root(self):
+        with mock.patch.object(lab.os, "geteuid", return_value=1000):
+            with self.assertRaisesRegex(lab.LabError, "needs root"):
+                lab.cmd_g1(self.args("--yes"))
+
+    def test_cmd_g1_writes_summary_and_exit_code(self):
+        run_one = mock.Mock(side_effect=[(0, "PASS g1 gpu-fault"),
+                                         (1, "FAIL g1 gpu-fault (x)")])
+        with self.env(run_one) as summary:
+            rc = lab.cmd_g1(self.args("--yes", "--runs", "3", "--hangcheck", "0"))
             self.assertEqual(rc, 1)
-            text = (Path(d) / "g1-summary-7.3.0-lab-12345678.txt").read_text()
-            self.assertEqual(text.splitlines(), [
+            self.assertEqual(summary.read_text().splitlines(), [
                 "# kver=7.3.0-lab cand=cand-a control=auto plan=gpu-fault,gpu-fault,gpu-fault",
                 "PASS g1 gpu-fault", "FAIL g1 gpu-fault (x)", "RESULT FAIL"])
+
+    def test_cmd_g1_all_pass(self):
+        with self.env(lambda s: (0, f"PASS g1 {s}")) as summary:
+            rc = lab.cmd_g1(self.args("--yes", "--runs", "2", "--hangcheck", "1"))
+            self.assertEqual(rc, 0)
+            self.assertEqual(summary.read_text().splitlines()[-1], "RESULT PASS")
+
+    def test_cmd_g1_interrupt_leaves_partial_summary_without_result(self):
+        calls = []
+
+        def run_one(sub):
+            calls.append(sub)
+            if len(calls) == 2:
+                raise KeyboardInterrupt
+            return 0, "PASS g1 gpu-fault"
+
+        with self.env(run_one) as summary:
+            with self.assertRaises(KeyboardInterrupt):
+                lab.cmd_g1(self.args("--yes", "--runs", "3", "--hangcheck", "0"))
+            lines = summary.read_text().splitlines()
+            self.assertEqual(lines, [
+                "# kver=7.3.0-lab cand=cand-a control=auto plan=gpu-fault,gpu-fault,gpu-fault",
+                "PASS g1 gpu-fault"])
+            self.assertFalse(any(l.startswith("RESULT") for l in lines))
+
+    def test_cmd_g1_abort_runs_nothing_and_writes_no_summary(self):
+        run_one = mock.Mock()
+        with self.env(run_one) as summary:
+            with mock.patch.object(lab.sys, "stdin", io.StringIO("no\n")):
+                with self.assertRaisesRegex(lab.LabError, "aborted"):
+                    lab.cmd_g1(self.args())
+            run_one.assert_not_called()
+            self.assertFalse(summary.exists())
+            self.assertEqual(list(summary.parent.glob("g1-summary-*")), [])
 
 
 if __name__ == "__main__":
