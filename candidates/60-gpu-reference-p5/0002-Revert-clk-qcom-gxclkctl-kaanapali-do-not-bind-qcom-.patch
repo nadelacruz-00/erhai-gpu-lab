@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 15:06:09 +0800
+Subject: [PATCH] =?UTF-8?q?Revert=20"clk:=20qcom:=20gxclkctl-kaanapali=20?=
+ =?UTF-8?q?=E2=80=94=20do=20not=20bind=20qcom,sm8750-gxclkctl"?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This reverts commit 9c9eefdef1e1aad35a4438a9e700fb644f601324.
+
+That commit dropped "qcom,sm8750-gxclkctl" from the match table because
+the sm8750 DT node then in use, clock-controller@3d68000, mapped only a
+4 KiB window while the driver registers its GX GDSC at offset 0x4024
+(max_register 0x4038). Probing faulted with a translation Oops inside
+gdsc_register(), killing the deferred_probe_work_func kworker while it
+held the deferred-probe mutex.
+
+The node is now gxclkctl: clock-controller@3d64000 with a 0x6000 window,
+so the GX GDSC at +0x4024 (0x3d68024) lies inside the mapping and the
+driver can bind again. The GMU's "gx" power-domain is provided by this
+controller.
+
+Fixes: 9c9eefdef1e1 ("clk: qcom: gxclkctl-kaanapali — do not bind qcom,sm8750-gxclkctl")
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/clk/qcom/gxclkctl-kaanapali.c | 11 +----------
+ 1 file changed, 1 insertion(+), 10 deletions(-)
+
+diff --git a/drivers/clk/qcom/gxclkctl-kaanapali.c b/drivers/clk/qcom/gxclkctl-kaanapali.c
+index 95aa5ee8e8b..8b71dc66ebb 100644
+--- a/drivers/clk/qcom/gxclkctl-kaanapali.c
++++ b/drivers/clk/qcom/gxclkctl-kaanapali.c
+@@ -55,16 +55,7 @@ static const struct of_device_id gx_clkctl_kaanapali_match_table[] = {
+ 	{ .compatible = "qcom,glymur-gxclkctl" },
+ 	{ .compatible = "qcom,kaanapali-gxclkctl" },
+ 	{ .compatible = "qcom,milos-gxclkctl" },
+-	/* "qcom,sm8750-gxclkctl" is deliberately NOT matched: the sm8750 DT
+-	 * node (clock-controller@3d68000) declares only a 4 KiB reg window,
+-	 * while this driver registers its GX GDSC at offset 0x4024
+-	 * (max_register 0x4038).  Probing it faults with a translation Oops
+-	 * inside gdsc_register(), which kills the deferred_probe_work_func
+-	 * kworker while it holds the deferred-probe mutex -- freezing every
+-	 * pending deferred probe on the device (PCIe RC / WCN7880 bring-up,
+-	 * ASoC card assembly).  Nothing on sm8750 needs this driver:
+-	 * gpucc-sm8750 registers its own CX/GX GDSCs and clocks.
+-	 */
++	{ .compatible = "qcom,sm8750-gxclkctl" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, gx_clkctl_kaanapali_match_table);
