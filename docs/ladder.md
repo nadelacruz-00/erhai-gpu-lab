@@ -224,6 +224,12 @@ Side finding: a local gcc-15 build (the package kernel b37) boots, so local buil
 
 `sudo gpu-checks.sh g0`: no FAIL. PASS gxclkctl-bound (`gxclkctl-kaanapali`), gmu-genpd (`3d37000.gmu genpd:0,genpd:1`), gx-gdsc-summary (`gx_clkctl_gx_gdsc`), no-oops, no-minus19, no-gx-warn, renderer (Adreno 830), zap, pstore, hung-task, dpm-watchdog, suspend-hang-gpu, probe, pin-released, shell-on-gpu, runtime-suspends. INFO: unrelated-warnings 13, fuse unreadable via nvmem, pon-reason not-readable. MDSS SMMU faults: 0. GPU OPPs available: 160-1100 MHz (14 levels), so the speed bin did not gate the GPU off (g-1 satisfied in practice; the raw fuse value stays unread). The first run of this checker reported `FAIL renderer`: a checker bug (root's `eglinfo -B` lists Mesa's llvmpipe in the Device-platform device list). Fixed in `288adae`.
 
+### g1 recover on the candidate (`60-gpu-reference-gpuccm`, 2026-10-29 00:10-00:18, `MODE=once`, `control=auto`)
+
+`sudo erhai-gpu-lab g1`: `gpu-fault` 5/5 **PASS** (IGT SUCCESS 6.9-7.9 s each, exactly one `hangcheck recover!`, no `cx gdsc didn't collapse`, no hw_init error, desktop kept running). `hangcheck` **FAIL**, reproduced twice: IGT `scratch[1+i] == 2+i` fails with `0 != 10` (submit #8 never ran) and `recover=2`. With the error IRQ off, the sw hangcheck fired after about 5 s and blamed fence 13743 (the oldest incomplete one, IGT submit #8; the bad packet is in #10), so recovery dropped an innocent submit. A second lockup was caught after IGT exited.
+
+Control: the package kernel (`7.3.0-rc5-sm8750-themojoman`, b37, the old GPU stack) fails `hangcheck` identically (`0 != 10`, recover=2, 00:25). So this is a pre-existing a8xx sw-hangcheck blame/replay quirk, not something this candidate introduced. It is logged as other lane (an upstream drm/msm question), and g1 is judged on `gpu-fault`. Still open in g1: one `gpu-fault` run with `MODE=always` (`g1 --pinned`).
+
 ### Idle-power baseline (operator step, not run)
 
 Command, package kernel, screen on at fixed brightness, Wi-Fi on, no apps:
@@ -249,7 +255,7 @@ for i in $(seq 180); do echo "$(date +%s) $(cat $B/voltage_now) $(cat $B/current
 | g0 control | lab-43 (package) | 2026-10-28 | as expected | renderer check fixed to accept `Adreno (TM) 830` |
 | g0 | 60-gpu-reference (gpucc =m) | 2026-10-29 | PASS | all contract checks; GX genpd attached; black screen fixed by gpucc/gxclkctl =m |
 | g1 control | lab-43 (package) | 2026-10-28 | PASS (recovered) | CP hang caught by the sw hangcheck in about 5 s, one `hangcheck recover!`; no GMU wedge path exercised |
-| g1 recover (5x + MODE=always 1x) | | | | |
+| g1 recover (5x + MODE=always 1x) | 60-gpu-reference (gpucc =m) | 2026-10-29 | gpu-fault 5/5 PASS; pinned run pending | hangcheck subtest fails identically on the package kernel (pre-existing sw-hangcheck quirk) |
 | g2 (cycles: ) | | | | |
 | g3 | | | | |
 | g4 (idle mW: ) | | | | |
