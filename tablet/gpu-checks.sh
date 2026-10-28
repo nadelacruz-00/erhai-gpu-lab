@@ -146,6 +146,10 @@ check_no_gx_warn() {
 check_renderer() {
     local e
     if [ -n "${EGLINFO_FILE:-}" ]; then e=$(cat "$EGLINFO_FILE" 2>/dev/null); else e=$(eglinfo -B 2>/dev/null); fi
+    # The "Device platform" section lists every EGL device, including Mesa's
+    # software one (llvmpipe) next to the GPU; it is not a platform anything
+    # renders on, so it is left out. It comes last in eglinfo's output.
+    e=$(sed '/^Device platform:/,$d' <<<"$e")
     # Mesa reports "Adreno (TM) 830" (older builds: "FD830"); any llvmpipe/softpipe renderer fails
     if grep -qiE 'renderer: .*(llvmpipe|softpipe|swrast)' <<<"$e"; then
         report FAIL renderer "software renderer in eglinfo -B"

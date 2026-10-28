@@ -160,6 +160,12 @@ class GpuChecks(unittest.TestCase):
         r = run_checks("pass")
         self.assertRegex(r.stdout, r"(?m)^PASS renderer Adreno 830")
 
+    def test_renderer_ignores_software_device_in_device_platform(self):
+        # root's eglinfo -B on the 2026-10-29 candidate: Adreno everywhere,
+        # plus Mesa's llvmpipe listed as a second EGL device
+        r = run_checks("renderer-device-swrast")
+        self.assertRegex(r.stdout, r"(?m)^PASS renderer Adreno 830")
+
     def test_renderer_fails_when_any_platform_is_software(self):
         r = run_checks("renderer-mixed")
         self.assertRegex(r.stdout, r"(?m)^FAIL renderer software renderer")

@@ -1,0 +1,15 @@
+GBM platform:
+OpenGL core profile renderer: Adreno (TM) 830
+OpenGL ES profile renderer: Adreno (TM) 830
+Wayland platform:
+X11 platform:
+Surfaceless platform:
+OpenGL core profile renderer: Adreno (TM) 830
+OpenGL ES profile renderer: Adreno (TM) 830
+Device platform:
+Platform Device platform:
+OpenGL core profile renderer: Adreno (TM) 830
+OpenGL ES profile renderer: Adreno (TM) 830
+Platform Device platform:
+OpenGL core profile renderer: llvmpipe (LLVM 21.1.8, 128 bits)
+OpenGL ES profile renderer: llvmpipe (LLVM 21.1.8, 128 bits)
