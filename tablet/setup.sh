@@ -5,7 +5,12 @@
 # are missing and neither root nor passwordless sudo is available.
 set -u
 
-PKGS=(trace-cmd mesa-utils vulkan-tools libegl-dev libgles-dev)
+# trace-cmd: rpm cycle counts; mesa-utils/vulkan-tools: renderer check.
+# The rest build IGT msm_recovery (tools/igt-recovery), the g1 hang source.
+PKGS=(trace-cmd mesa-utils vulkan-tools
+      git meson ninja-build pkg-config flex bison zlib1g-dev
+      libdrm-dev libpciaccess-dev libkmod-dev libdw-dev libpixman-1-dev
+      libcairo2-dev libpci-dev libudev-dev libglib2.0-dev)
 missing=()
 for p in "${PKGS[@]}"; do
     dpkg -s "$p" >/dev/null 2>&1 && echo "$p already installed" || missing+=("$p")

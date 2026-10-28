@@ -1,0 +1,88 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# g1 hang source: upstream IGT msm_recovery (igt-gpu-tools), pinned, built
+# once on the tablet. No hang code of our own.
+#
+#   tools/igt-recovery/igt-recovery build              clone + build (no root)
+#   sudo tools/igt-recovery/igt-recovery run [SUBTEST] one run, kernel log saved
+#
+# SUBTEST is gpu-fault (default: hw hang detection, one bad submit among 16,
+# the other 15 must replay) or hangcheck (same with the error IRQ disabled, so
+# the sw hangcheck timer fires). Exit: 0 PASS, 1 FAIL, 2 usage/setup.
+set -u
+
+IGT_REPO=https://gitlab.freedesktop.org/drm/igt-gpu-tools.git
+IGT_TAG=v2.6
+IGT_COMMIT=916c79cfb7675ca01607dcd821f8c49d4f633a6f
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+IGT_DIR=${IGT_DIR:-$HERE/igt}
+BIN=$IGT_DIR/build/tests/msm/msm_recovery
+EVIDENCE=${EVIDENCE:-/var/lib/erhai-gpu}
+
+die() { echo "igt-recovery: $*" >&2; exit 2; }
+
+build() {
+	for t in git meson ninja; do
+		command -v "$t" >/dev/null || die "$t missing; run tablet/setup.sh"
+	done
+	mkdir -p "$IGT_DIR"
+	if [ ! -d "$IGT_DIR/src/.git" ]; then
+		git clone -q --no-checkout "$IGT_REPO" "$IGT_DIR/src" || die "clone failed"
+	fi
+	git -C "$IGT_DIR/src" fetch -q --depth 1 origin "refs/tags/$IGT_TAG:refs/tags/$IGT_TAG" ||
+		die "fetch $IGT_TAG failed"
+	git -C "$IGT_DIR/src" checkout -q --detach "$IGT_COMMIT" || die "checkout failed"
+	[ "$(git -C "$IGT_DIR/src" rev-parse HEAD)" = "$IGT_COMMIT" ] ||
+		die "$IGT_TAG is not $IGT_COMMIT"
+	if [ ! -d "$IGT_DIR/build" ]; then
+		meson setup "$IGT_DIR/build" "$IGT_DIR/src" \
+			-Dtests=enabled -Drunner=disabled -Doverlay=disabled \
+			-Dman=disabled -Ddocs=disabled -Dtestplan=disabled \
+			-Dchamelium=disabled -Dvalgrind=disabled \
+			-Dlibunwind=disabled -Dxe_driver=disabled || die "meson setup failed"
+	fi
+	ninja -C "$IGT_DIR/build" tests/msm/msm_recovery || die "build failed"
+	echo "igt-recovery: built $BIN ($IGT_TAG $IGT_COMMIT)"
+}
+
+run() {
+	local sub=$1
+	[ "$(id -u)" = 0 ] || die "run needs root (debugfs, devcoredump)"
+	[ -x "$BIN" ] || die "$BIN missing; run: tools/igt-recovery/igt-recovery build"
+	mkdir -p "$EVIDENCE"
+	local ts out since rc
+	ts=$(date +%Y%m%d-%H%M%S)
+	out=$EVIDENCE/g1-$sub-$ts.txt
+	since=$(date '+%Y-%m-%d %H:%M:%S')
+	echo "igt-recovery: $sub at $since, kernel $(uname -r), control=$(cat /sys/devices/platform/soc@0/3d00000.gpu/power/control 2>/dev/null)"
+	timeout 120 "$BIN" --run-subtest "$sub"
+	rc=$?
+	sleep 3
+	journalctl -k --since "$since" --no-pager >"$out" 2>&1
+
+	local rec cx hw
+	rec=$(grep -c 'hangcheck recover!' "$out")
+	cx=$(grep -c "cx gdsc didn't collapse" "$out")
+	hw=$(grep -ciE 'hw_init.*fail|failed to (re)?init|Couldn.t power up the GPU' "$out")
+	echo "igt-recovery: subtest=$sub igt_rc=$rc recover=$rec cx_not_collapsed=$cx hw_init_errors=$hw log=$out"
+	if [ "$rc" = 0 ] && [ "$rec" = 1 ] && [ "$cx" = 0 ] && [ "$hw" = 0 ]; then
+		echo "PASS g1 $sub"
+		return 0
+	fi
+	echo "FAIL g1 $sub (want igt_rc=0 recover=1 cx_not_collapsed=0 hw_init_errors=0)"
+	return 1
+}
+
+case "${1:-}" in
+build) build ;;
+run)
+	sub=${2:-gpu-fault}
+	case "$sub" in
+	gpu-fault|hangcheck) run "$sub" ;;
+	*) die "unknown subtest '$sub' (gpu-fault|hangcheck)" ;;
+	esac
+	;;
+*) echo "usage: $0 build | run [gpu-fault|hangcheck]" >&2; exit 2 ;;
+esac
