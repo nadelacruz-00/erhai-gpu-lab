@@ -809,6 +809,16 @@ BASELINE_MW = 3639      # package kernel, MODE=once, 2026-10-28
 POWER_INTERVAL_S = 10
 
 
+def _charger_error(epoch: int) -> LabError:
+    return LabError(f"charger connected (current_now >= 0 at {epoch}); unplug and rerun")
+
+
+def power_verdict(avg: float) -> tuple[str, bool]:
+    """(avg shown with one decimal, shown value <= baseline): text and verdict agree."""
+    shown = f"{avg:.1f}"
+    return shown, float(shown) <= BASELINE_MW
+
+
 def avg_discharge_mw(samples: list[tuple[int, int, int]]) -> float:
     """Mean battery power in mW of (epoch, voltage uV, current uA) samples.
 
@@ -818,8 +828,7 @@ def avg_discharge_mw(samples: list[tuple[int, int, int]]) -> float:
         raise LabError("no power samples")
     for epoch, _, current in samples:
         if current >= 0:
-            raise LabError(f"charger connected (current_now >= 0 at {epoch}); "
-                           "unplug and rerun")
+            raise _charger_error(epoch)
     return sum(v * -i / 1e9 for _, v, i in samples) / len(samples)
 
 
@@ -832,7 +841,8 @@ def sample_battery(count: int, battery: Path = BATTERY, sleep=time.sleep,
                    clock=lambda: int(time.time())) -> list[tuple[int, int, int]]:
     """Read voltage_now/current_now `count` times, POWER_INTERVAL_S apart.
 
-    The epoch is only a label for the refusal message; nothing keys on it."""
+    A charger on the first sample refuses at once instead of after the whole
+    window. The epoch is only a label for the refusal message; nothing keys on it."""
     samples = []
     for n in range(count):
         if n:
@@ -843,6 +853,8 @@ def sample_battery(count: int, battery: Path = BATTERY, sleep=time.sleep,
         except (OSError, ValueError) as e:
             raise LabError(f"cannot read {battery}: {e}") from e
         samples.append((clock(), v, i))
+        if n == 0 and i >= 0:
+            raise _charger_error(samples[0][0])
     return samples
 
 
@@ -858,15 +870,15 @@ def cmd_power(args: argparse.Namespace) -> int:
     print(f"Sampling every {POWER_INTERVAL_S} s for {args.minutes} min ({count} samples)...",
           flush=True)
     samples = sample_battery(count)
-    avg = avg_discharge_mw(samples)
     out = STATE_DIR / f"power-{kver}-{boot_id[:8]}.txt"
-    try:
+    try:     # kept even when averaging refuses (a charger plugged in mid-window)
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         out.write_text(format_samples(samples))
     except OSError as e:
         raise LabError(f"cannot write {out}: {e}") from e
-    print(f"avg={avg:.0f} mW over {len(samples)} samples; baseline {BASELINE_MW} mW; "
-          f"candidate <= baseline: {'yes' if avg <= BASELINE_MW else 'no'}")
+    shown, ok = power_verdict(avg_discharge_mw(samples))
+    print(f"avg={shown} mW over {len(samples)} samples; baseline {BASELINE_MW} mW; "
+          f"candidate <= baseline: {'yes' if ok else 'no'}")
     print(f"samples: {out}")
     return 0
 
@@ -1153,12 +1165,11 @@ def _report_power(path: Path) -> str:
             continue
         samples.append((e, v, i))
     try:
-        avg = avg_discharge_mw(samples)
+        shown, ok = power_verdict(avg_discharge_mw(samples))
     except LabError as e:
         return f"- {path.name}: {e}"
-    return (f"- {path.name}: avg {avg:.0f} mW over {len(samples)} samples; "
-            f"baseline {BASELINE_MW} mW; candidate <= baseline: "
-            f"{'yes' if avg <= BASELINE_MW else 'no'}")
+    return (f"- {path.name}: avg {shown} mW over {len(samples)} samples; "
+            f"baseline {BASELINE_MW} mW; candidate <= baseline: {'yes' if ok else 'no'}")
 
 
 def render_report(state: Path, kernel_logs: dict[str, str] | None = None) -> str:

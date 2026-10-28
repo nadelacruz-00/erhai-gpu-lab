@@ -71,7 +71,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("PASS g1 hangcheck", out)
         self.assertIn("RESULT PASS", out)
         self.assertIn(f"power-{K}-aaaaaaaa.txt", out)
-        self.assertIn("3600 mW", out)
+        self.assertIn("avg 3600.0 mW", out)
         self.assertIn(f"baseline {lab.BASELINE_MW} mW", out)
 
     def test_report_g1_repeat_summaries_in_run_order(self):
@@ -104,6 +104,11 @@ class ReportTest(unittest.TestCase):
     def test_report_power_above_baseline(self):
         self.put(f"power-{K}-aaaaaaaa.txt", "1 4000000 -1000000\n")   # 4000 mW
         self.assertIn("candidate <= baseline: no", lab.render_report(self.state))
+
+    def test_report_power_text_and_verdict_agree_near_the_baseline(self):
+        self.put(f"power-{K}-aaaaaaaa.txt", "1 4000000 -909850\n")    # 3639.4 mW
+        self.assertIn("avg 3639.4 mW over 1 samples; baseline 3639 mW; "
+                      "candidate <= baseline: no", lab.render_report(self.state))
 
     def test_report_sections_in_order(self):
         self.put("boots.log", BOOT_A)

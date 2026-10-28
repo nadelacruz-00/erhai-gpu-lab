@@ -47,6 +47,14 @@ class AvgDischargeTest(unittest.TestCase):
             lab.avg_discharge_mw([])
 
 
+class VerdictTest(unittest.TestCase):
+    def test_verdict_uses_the_shown_value(self):
+        self.assertEqual(lab.power_verdict(3639.04), ("3639.0", True))
+        self.assertEqual(lab.power_verdict(3639.05), ("3639.1", False))
+        self.assertEqual(lab.power_verdict(3639.4), ("3639.4", False))
+        self.assertEqual(lab.power_verdict(3600.0), ("3600.0", True))
+
+
 class SampleTest(unittest.TestCase):
     def test_sample_battery_reads_and_sleeps_between(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,6 +67,17 @@ class SampleTest(unittest.TestCase):
         self.assertEqual(out, [(10, 4000000, -900000), (20, 4000000, -900000),
                                (30, 4000000, -900000)])
         self.assertEqual(sleeps, [lab.POWER_INTERVAL_S] * 2)
+
+    def test_charger_on_first_sample_stops_at_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bat = Path(tmp)
+            (bat / "voltage_now").write_text("4000000\n")
+            (bat / "current_now").write_text("120000\n")
+            sleeps = []
+            with self.assertRaisesRegex(lab.LabError,
+                                        r"charger connected \(current_now >= 0 at 10\)"):
+                lab.sample_battery(180, bat, sleep=sleeps.append, clock=lambda: 10)
+        self.assertEqual(sleeps, [])
 
     def test_format_samples_matches_fixture(self):
         self.assertEqual(lab.format_samples(fixture_samples()), FIXTURE.read_text())
@@ -77,9 +96,11 @@ class CmdPowerTest(unittest.TestCase):
                  mock.patch.object(lab, "BOOT_ID_PATH", state / "boot_id"), \
                  contextlib.redirect_stdout(out):
                 un.return_value.release = "7.3.0-test"
-                rc = lab.cmd_power(argparse.Namespace(minutes=minutes))
-            files = {p.name: p.read_text() for p in state.glob("power-*")}
-            return rc, out.getvalue(), files, sb
+                try:
+                    rc = lab.cmd_power(argparse.Namespace(minutes=minutes))
+                finally:
+                    self.written = {p.name: p.read_text() for p in state.glob("power-*")}
+            return rc, out.getvalue(), self.written, sb
 
     def test_writes_file_and_reports(self):
         samples = fixture_samples()
@@ -90,9 +111,22 @@ class CmdPowerTest(unittest.TestCase):
         self.assertEqual(list(files), ["power-7.3.0-test-abcdef01.txt"])
         self.assertEqual(files["power-7.3.0-test-abcdef01.txt"], FIXTURE.read_text())
         avg = lab.avg_discharge_mw(samples)
-        self.assertIn(f"avg={avg:.0f} mW over 20 samples; baseline 3639 mW; "
+        self.assertIn(f"avg={avg:.1f} mW over 20 samples; baseline 3639 mW; "
                       f"candidate <= baseline: {'yes' if avg <= 3639 else 'no'}", out)
         self.assertIn("screen on", out)
+
+    def test_text_and_verdict_agree_near_the_baseline(self):
+        _, out, _, _ = self.run_power(1, [(1, 4000000, -909850)])     # 3639.4 mW
+        self.assertIn("avg=3639.4 mW over 1 samples; baseline 3639 mW; "
+                      "candidate <= baseline: no", out)
+
+    def test_samples_written_before_a_late_charger_refusal(self):
+        samples = fixture_samples()
+        samples[-1] = (samples[-1][0], samples[-1][1], 50000)
+        with self.assertRaisesRegex(lab.LabError, "charger connected"):
+            self.run_power(2, samples)
+        self.assertEqual(self.written, {"power-7.3.0-test-abcdef01.txt":
+                                        lab.format_samples(samples)})
 
     def test_parser_default_minutes(self):
         args = lab.build_parser().parse_args(["power"])
