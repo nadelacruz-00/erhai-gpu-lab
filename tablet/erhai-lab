@@ -727,7 +727,29 @@ def run_one(sub: str) -> tuple[int, str]:
             print(line, end="", flush=True)
             seen.append(line)
         rc = proc.wait()
-    return rc, g1_result_line(sub, rc, last_nonempty(seen))
+    line = g1_result_line(sub, rc, last_nonempty(seen))
+    if rc == 0 and not line.startswith("PASS"):
+        rc = 1      # a FAIL or missing line stops the ladder like a non-zero exit
+    return rc, line
+
+
+_G1_SUMMARY_RE = re.compile(r"^(g1-summary-.+-[0-9a-f]{8})(?:-([0-9]+))?\.txt$")
+
+
+def g1_summary_path(state: Path, kver: str, boot8: str) -> Path:
+    """g1-summary-<kver>-<boot8>.txt, or -2, -3, ... if earlier runs of this boot exist."""
+    path = state / f"g1-summary-{kver}-{boot8}.txt"
+    n = 1
+    while path.exists():
+        n += 1
+        path = state / f"g1-summary-{kver}-{boot8}-{n}.txt"
+    return path
+
+
+def _g1_summary_order(path: Path) -> tuple[str, int]:
+    """Sort key: by kver and boot, then run order (base, -2, ..., -10)."""
+    m = _G1_SUMMARY_RE.match(path.name)
+    return (m.group(1), int(m.group(2) or 1)) if m else (path.name, 0)
 
 
 def _append_durable(f, text: str) -> None:
@@ -753,10 +775,13 @@ def cmd_g1(args: argparse.Namespace) -> int:
         raise LabError("power/control is on; pass --pinned for the MODE=always run")
     if not args.yes:
         g1_confirm(sys.stdin.readline)
-    out = STATE_DIR / f"g1-summary-{kver}-{boot_id[:8]}.txt"
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        f = open(out, "w")
+    except OSError as e:
+        raise LabError(f"cannot create {STATE_DIR}: {e}") from e
+    out = g1_summary_path(STATE_DIR, kver, boot_id[:8])   # never overwrite a summary
+    try:
+        f = open(out, "x")
     except OSError as e:
         raise LabError(f"cannot write {out}: {e}") from e
     # Header first and each run's line as it finishes, fsynced: a summary with
@@ -1147,6 +1172,7 @@ def render_report(state: Path, kernel_logs: dict[str, str] | None = None) -> str
 
     boots = _boots_records(state)
     g0, g1, power = files("g0-*.txt"), files("g1-summary-*.txt"), files("power-*.txt")
+    g1.sort(key=_g1_summary_order)
     soak = _report_soak(state, boots, kernel_logs)
     sections = []
     if boots:

@@ -74,6 +74,16 @@ class ReportTest(unittest.TestCase):
         self.assertIn("3600 mW", out)
         self.assertIn(f"baseline {lab.BASELINE_MW} mW", out)
 
+    def test_report_g1_repeat_summaries_in_run_order(self):
+        for name in ("", "-10", "-2"):
+            self.put(f"g1-summary-{K}-12345678{name}.txt",
+                     G1_HEADER + f"\nPASS g1 run{name or '-1'}\nRESULT PASS\n")
+        out = lab.render_report(self.state)
+        heads = [ln for ln in out.splitlines() if ln.startswith("### g1-summary")]
+        self.assertEqual(heads, [f"### g1-summary-{K}-12345678.txt",
+                                 f"### g1-summary-{K}-12345678-2.txt",
+                                 f"### g1-summary-{K}-12345678-10.txt"])
+
     def test_report_g1_without_result_line_is_flagged(self):
         self.put(f"g1-summary-{K}-aaaaaaaa.txt", G1_HEADER + "\nPASS g1 gpu-fault\n")
         out = lab.render_report(self.state)

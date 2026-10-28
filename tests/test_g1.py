@@ -135,6 +135,31 @@ class RunOneTest(unittest.TestCase):
             self.assertIn("igt-recovery: run start", out.getvalue())
 
 
+class RunOneVerdictTest(unittest.TestCase):
+    """A zero exit without a PASS line is a failure: the loop stops, RESULT FAIL."""
+
+    def run_fake(self, body):
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / "igt-recovery"
+            fake.write_text("#!/bin/sh\n" + body)
+            fake.chmod(0o755)
+            with mock.patch.object(lab, "helper", return_value=fake), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                return lab.run_one("gpu-fault")
+
+    def test_fail_line_with_zero_exit_is_rc_1(self):
+        self.assertEqual(self.run_fake('echo "FAIL g1 gpu-fault (recover=2)"\nexit 0\n'),
+                         (1, "FAIL g1 gpu-fault (recover=2)"))
+
+    def test_no_line_with_zero_exit_is_rc_1(self):
+        self.assertEqual(self.run_fake("exit 0\n"),
+                         (1, "FAIL g1 gpu-fault (no result line, rc=0)"))
+
+    def test_pass_line_with_zero_exit_stays_rc_0(self):
+        self.assertEqual(self.run_fake('echo "PASS g1 gpu-fault"\n'),
+                         (0, "PASS g1 gpu-fault"))
+
+
 class RunOneNoLineTest(unittest.TestCase):
     def test_run_one_records_missing_result_line(self):
         with tempfile.TemporaryDirectory() as d:
@@ -145,6 +170,20 @@ class RunOneNoLineTest(unittest.TestCase):
                  contextlib.redirect_stdout(io.StringIO()):
                 rc, last = lab.run_one("gpu-fault")
             self.assertEqual((rc, last), (2, "FAIL g1 gpu-fault (no result line, rc=2)"))
+
+
+class SummaryPathTest(unittest.TestCase):
+    def test_first_free_summary_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d)
+            base = state / "g1-summary-7.3.0-lab-12345678.txt"
+            self.assertEqual(lab.g1_summary_path(state, "7.3.0-lab", "12345678"), base)
+            base.write_text("first\n")
+            self.assertEqual(lab.g1_summary_path(state, "7.3.0-lab", "12345678"),
+                             state / "g1-summary-7.3.0-lab-12345678-2.txt")
+            (state / "g1-summary-7.3.0-lab-12345678-2.txt").write_text("second\n")
+            self.assertEqual(lab.g1_summary_path(state, "7.3.0-lab", "12345678"),
+                             state / "g1-summary-7.3.0-lab-12345678-3.txt")
 
 
 class CmdG1Test(unittest.TestCase):
@@ -193,6 +232,17 @@ class CmdG1Test(unittest.TestCase):
             rc = lab.cmd_g1(self.args("--yes", "--runs", "2", "--hangcheck", "1"))
             self.assertEqual(rc, 0)
             self.assertEqual(summary.read_text().splitlines()[-1], "RESULT PASS")
+
+    def test_cmd_g1_second_run_same_boot_keeps_first_summary(self):
+        with self.env(lambda s: (0, f"PASS g1 {s}")) as summary:
+            lab.cmd_g1(self.args("--yes", "--runs", "1", "--hangcheck", "0"))
+            first = summary.read_text()
+            lab.cmd_g1(self.args("--yes", "--runs", "2", "--hangcheck", "0"))
+            self.assertEqual(summary.read_text(), first)
+            second = summary.with_name("g1-summary-7.3.0-lab-12345678-2.txt")
+            self.assertEqual(second.read_text().splitlines(), [
+                "# kver=7.3.0-lab cand=cand-a control=auto plan=gpu-fault,gpu-fault",
+                "PASS g1 gpu-fault", "PASS g1 gpu-fault", "RESULT PASS"])
 
     def test_cmd_g1_interrupt_leaves_partial_summary_without_result(self):
         calls = []
