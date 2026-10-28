@@ -18,8 +18,9 @@ stack; only a candidate that passes its rung becomes a PR to the port.
   and a `-lab-<candidate>` kernelrelease. Every requested config symbol is
   asserted in the final `.config`. The result is a Release: a UKI, a modules
   tarball, the `.config` and `SHA256SUMS`.
-- **`erhai-lab`** (`tablet/erhai-lab`, stdlib-only python3) runs on the
-  tablet. `erhai-lab fetch 60-gpu-reference` downloads a release, verifies every
+- **`erhai-gpu-lab`** (`tablet/erhai-lab`, stdlib-only python3; `sudo
+  tablet/install.sh` installs it as `/usr/local/sbin/erhai-gpu-lab`) runs on the
+  tablet. `erhai-gpu-lab fetch 60-gpu-reference` downloads a release, verifies every
   checksum and the UKI/modules version match, and installs the kernel beside
   the package kernel. rEFInd's default is never changed.
 
