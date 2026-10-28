@@ -1,0 +1,13 @@
+[Unit]
+Description=erhai: black-screen diagnostic on lab-60-gpu-reference* candidates
+After=graphical.target
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c "grep -q erhai_lab.candidate=60-gpu-reference /proc/cmdline"
+ExecStartPre=/bin/sleep 90
+ExecStart=/usr/local/sbin/erhai-black-collect.sh
+TimeoutStartSec=300
+
+[Install]
+WantedBy=graphical.target
