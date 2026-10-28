@@ -1,3 +1,164 @@
 # Ladder
 
-Filled in by the ladder task.
+Every hardware test of candidate `60-gpu-reference` is judged against this page: the baseline, the attribution rule, the rungs g-1..g4 plus the PR, and the bisection procedure. Source: the design doc (`nadelacruz-erhai-pps-dual-pump-design-20261027-171129.md`) with the eng-review ledger applied (D3 PON reason, D4 tools and inducer, D5 checker, D9 regression contract). No IGT, no cooling map (`62-gpu-cooling-map` is a TODO).
+
+Instruments:
+
+- `tablet/gpu-checks.sh g0` prints one `PASS|FAIL|INFO` line per check and exits 1 on any FAIL. Check ids: `gxclkctl-bound`, `gmu-genpd`, `gx-gdsc-summary`, `no-oops`, `no-minus19`, `no-gx-warn`, `renderer`, `zap`, `fuse`, `pstore`, `hung-task`, `dpm-watchdog`, `pon-reason`, `suspend-hang-gpu`, `dmesg-readable`, `probe`, `pin-released`, `shell-on-gpu`, `runtime-suspends`.
+- `tablet/gpu-checks.sh cycles <seconds>` counts rpm suspend/resume cycles of `3d00000.gpu` over a window.
+- `tools/gpu-hang/gpu-hang [--iterations N]` is the only inducer (EGL/GLES2 surfaceless; fragment shader with a uniform loop bound of `0xFFFFFFFF`). Exit 0 completed, 2 setup failure, 3 reset detected, 4 timeout. NEVER run the default iteration count on a kernel whose recovery is broken (the control kernel); use `--iterations 1`.
+- `tools/export-patches.sh <kernel-dir> <branch> <candidate> [--prefix N]` exports the first N commits of the stack.
+- `tablet/setup.sh` installs trace-cmd, mesa-utils, vulkan-tools, devmem2, libegl-dev, libgles-dev.
+
+Preconditions for g0 on the candidate, g1 and g2: `/etc/erhai/gpu-pin.conf` has `MODE=once` (pin released). With `MODE=always` the checker reports `pin-released` as INFO and `runtime-suspends` as INFO (when `power/control=on`), which is not a proof. The one exception is the explicit `MODE=always` run in g1 recover.
+
+## Baseline
+
+Only the GMU-attributed column is this work's problem. The other-lane column belongs to the display and suspend work. Boots are keyed by journal start time (`journalctl --list-boots`); the boot ID is given where it was captured, since relative indices shift at every reboot. Indicative census, not a rate study.
+
+| Period | Boots | GMU-attributed wedges (dmesg has `GMU OOB`/`hangcheck recover`/`a8xx_recover`) | Other-lane freezes, with evidence | Unattributed (no evidence either way) |
+|---|---|---|---|---|
+| Pinned, 2026-10-20 16:32 -> 10-24 18:37 | 45 | 1: boot of 10-23 03:01 (195 OOB wedges, 125 recovers, pinned) | 5: 10-21 20:07 (panel-off/power-key path), 10-21 21:12, 21:24, 21:47 (lab-00-debug suspend work), 10-22 07:03 (hung entering s2idle) | 0 |
+| Pin-once, 10-24 18:37 -> 10-27 16:07 | 16 | 2: 10-27 15:22 (`3b74091312d9`, 53 wedges, 29 recovers, rebooted from SSH) and 10-27 15:35 (`c2a246527422`, the live capture, 194 recovers) | 2: 10-26 10:51 (`01d4eb650bd4`, charger attach/detach cycling in the last 90 s), 10-27 11:06 (`c248d5bb04ff`, DPU `vblank timeout`, gnome-shell unresponsive, no GMU lines) | 2: 10-27 12:59 (`ec0c5e40ecd6`) and 14:23 (`49ad13244063`), no GPU, DPU, suspend or hung-task lines before the hard reset; CPU at 101-103 C in the last seconds of both |
+
+**Unattributed baseline: 2 in 16 boots** over ~3 days on the current IFPC-off kernel (`lab-43-pr-dual-pump`, pin-once). Any unattributed reset on the candidate is compared against this (clause 3). The baseline is written here before g0 (clause 3a).
+
+## Attribution rule
+
+Applies to every rung and to the Success Criteria.
+
+1. A freeze or hard reset counts against this work ("GMU-attributed") if dmesg shows GMU/hangcheck/`a8xx_recover` lines before it, or `pm_genpd_summary` taken during it shows the GPU or GMU holding CX.
+2. It is logged under "other lane" and does not fail the rung if the evidence names something other than the GPU: DPU `vblank timeout`/commit timeouts; a suspend-entry or resume hang whose DPM-watchdog or `PM:` callback line names a non-GPU device; a hung-task or softlockup trace whose stack is in a non-GPU driver; or a pstore/ramoops panic record from another subsystem. A DPM-watchdog panic, hung-task trace or softlockup that names `3d00000.gpu`, `3d37000.gmu`, `a6xx_*`/`a8xx_*` or `msm_gpu_*` is clause 1, not clause 2 (patch 5 puts `a6xx_rpmh_stop`/`a6xx_gmu_rpmh_off` back on the suspend path, so a GPU suspend hang is a possible outcome of this work).
+3. A spontaneous reset or freeze with **no evidence either way** (no GPU lines, no DPU/suspend lines, no hung-task or softlockup trace, no pstore record) is scored **"unattributed" and counts against the rung**. Re-enabling IFPC (patch 5) is a change that could produce a silent power-on-reset with an empty log (the port disabled IFPC after one such event on 2026-09-12), but the current IFPC-off kernel already produces them (baseline above: 2 in 16 boots, both on 10-27 with the CPU at 101-103 C). Protocol:
+   - (a) the baseline is written into `docs/ladder.md` before g0;
+   - (b) an unattributed reset in g2/g4 first gets its evidence paths checked: was `/sys/fs/pstore` populated after the reboot? did `systemd-pstore` archive to `/var/lib/systemd/pstore`? was the hung-task detector armed (`/proc/sys/kernel/hung_task_timeout_secs`)?
+   - (c) if the paths worked and the log is still empty, run the A/B: re-apply only the IFPC revert (`9c3aa45c45`), rebuild as `60-gpu-reference-ifpc-off`, run the same rung for the same wall-clock time, and compare counts against each other and against the baseline;
+   - (d) IFPC stays off only if the IFPC-on arm shows more unattributed resets than both the IFPC-off arm and the baseline over equal time; otherwise the resets are logged as a pre-existing lane (thermal or other) and the rung is judged on clauses 1 and 2. One event never decides it.
+
+**Evidence paths that make clause 3 rare.** The lab kernel builds hung-task, softlockup and DPM-watchdog detection (patch 6). The kernel has `CONFIG_PSTORE=y`, `PSTORE_RAM=y`, `PSTORE_CONSOLE=y` with the `ramoops@a7800000` reserved-memory node registered (`pstore: Registered ramoops as persistent store backend` in every boot) and `/sys/fs/pstore` mounted.
+
+**Limit (eng review D3).** On this board ramoops survives only a warm reset, i.e. a kernel-driven reboot such as the `panic=30` path. A PMIC-watchdog reset or a power-key hold does not preserve DRAM (`dc13a4717c`, 2026-08-28, re-added `af94396238`). So a hung-task/softlockup/DPM-watchdog *panic* leaves a record, but a PMIC watchdog bite or a thumb on the power key leaves nothing. Do not read a cold reset as "pstore silent".
+
+**PON reason: pending operator probe (Task 9).** One bounded probe (<= 1 h, before g0) looks for a PMIC power-on-reason source readable from Linux (an SDAM cell via the existing `spmi_sdam0` nvmem, `qcom-pon`, or the SDAM reboot-mode cells yzddmr6 wired in `efe984cb9f`/`31a79407cf`). If found, g0 logs the value every boot (`pon-reason`) and clause 3 uses it to separate watchdog resets from power-key holds. If not found, g0 records "PON reason: not readable" and clause 3 runs on the baseline protocol alone. Result: see Results.
+
+## Rungs
+
+**Two recovery paths, two proofs.** A CP hang (shader loop) reaches `a8xx_recover` with `gmu->hung == false`: `a6xx_gmu_stop` runs the graceful `a6xx_gmu_shutdown`, the GMU itself drops GX, and `a6xx_gmu_gxpd_put` only forces GX if `gx_is_on()` still reads true. A GMU wedge (OOB/HFI timeout, `a6xx_gmu_fault`) sets `gmu->hung = true`: `a6xx_gmu_force_off` runs, `gx_is_on()` is true, and `a6xx_gmu_gxpd_put` -> `dev_pm_genpd_synced_poweroff(gxpd)` is the only thing that drops GX so CX can collapse. P1a is about the second path. There is no clean way to induce a GMU wedge from userspace, so g1 proves the recovery machinery is present and healthy with a control run, and the P1a proof itself rests on the first natural wedge in g2/g4. P1a log sequence: `GMU OOB`/`HFI` timeout -> one `hangcheck recover!` -> no `cx gdsc didn't collapse` -> `hw_init` succeeds -> fences resume.
+
+| Rung | What | Pass |
+|---|---|---|
+| g-1 fuse | On the current kernel, before any build: `sudo devmem2 0x221c8138 h` (qfprom `0x221c8000 + 0x138`, bits 0-9; D4: devmem2, g0 cross-checks against the qfprom cell). Record raw and masked value. | Value recorded. If it is not one of `0, 252, 242, 232, 221, 190`, patch 4 gets one extra commit mapping that value to a bin with the OPP mask argued from Qualcomm's table, and the value goes into the TheMojoMan issue; otherwise the adreno driver would refuse the bin and the GPU would not probe on g0. |
+| g0 control | Same `gpu-checks.sh g0` on the package kernel first (D9 control row). Needs `MODE=once`. | Preserved behaviors (1)-(5) below all PASS, `-19` present, `genpd:1` absent. Recorded in Results before the candidate's g0. This proves the checker before it judges the candidate. |
+| g0 boot | Boot `60-gpu-reference` (needs `MODE=once`, pin released); run `tablet/gpu-checks.sh g0` | No FAIL. Preserved (D9): (1) `probe`: GPU probes without `erhai_gmu_enable`, `/dev/dri/renderD128` driver `msm`, no `Couldn't power up the GPU` line; (2) `zap`: auth OK, no `pas_init_image`/zap error; (3) `renderer`: `eglinfo -B` reports `FD830`; (4) `pin-released`: `erhai-gpu-pin-once` reaches `RELEASED` (`/run/erhai-gpu-pin-once.state`, wait <= SETTLE+TIMEOUT); (5) `shell-on-gpu`: gnome-shell maps freedreno/`libgallium`, not `llvmpipe`/`swrast`. Intentional changes: `no-minus19` (no `-19` at boot); `gmu-genpd` (`3d37000.gmu` has `genpd:0` and `genpd:1`); `runtime-suspends` (`runtime_status` of `3d00000.gpu` reaches `suspended` at least once in 60 s idle with `control=auto`). Also: `gxclkctl-bound` (`3d64000.clock-controller/driver` -> `gxclkctl-kaanapali`); `gx-gdsc-summary` (`sudo cat /sys/kernel/debug/pm_genpd/pm_genpd_summary` lists `gx_clkctl_gx_gdsc` with the GMU); `no-oops`; `no-gx-warn` (the patch-7 `dev_warn` is absent); `fuse` (speed_bin and enabled OPPs via `available_frequencies`); evidence paths `pstore`, `hung-task`, `dpm-watchdog` (`grep DPM_WATCHDOG /proc/config.gz` = y); `pon-reason` (D3); `suspend-hang-gpu`, `dmesg-readable` (a dmesg that cannot be read fails the absence checks). |
+| g1 control | On the current `lab-43` kernel (or the package kernel), `control=auto`, run `tools/gpu-hang/gpu-hang --iterations 1`. Record dmesg. Never the default count here. | Outcome recorded either way: infinite loop (today's freeze) or clean recovery. If the control recovers, g1 on the candidate shows only "the CP-hang path still works" and P1a's proof moves to the first natural wedge in g2/g4. |
+| g1 recover | Same inducer on `60-gpu-reference` (`MODE=once`), `control=auto`, 5x (`--iterations 5`). Then with the pin active (`MODE=always`) 1x (`--iterations 1`), so the rollback configuration is also shown to recover. | Each time: exactly one `hangcheck recover!`, no `cx gdsc didn't collapse`, `hw_init` succeeds, the client gets a reset error (exit 3), gnome-shell keeps committing; a devcoredump with the GMU log exists if gen8 dumps are wired. Exit 4 (timeout) or a recover loop is a FAIL. |
+| g2 soak | 8 h of normal use with `control=auto` (`MODE=once`); count rpm cycles with `tablet/gpu-checks.sh cycles <seconds>` (trace-cmd `-b 4096` with a `dev_name` filter on `3d00000.gpu`) | >= 1000 suspend/resume cycles; zero GMU-attributed wedges, or every wedge recovers with the P1a log sequence (that first recovered natural wedge is the P1a proof). Record the cycle count at any wedge (hypothesis (i) stale RPMh/PDC state vs (ii) ungated OPPs). |
+| g3 Fmax | Only if g2 wedges: cap `max_freq` to 967 MHz, then 900 MHz, from userspace; compare wedge rate; relate to the fuse bin and `opp-supported-hw` | Wedge-rate difference across >= 8 h each; decides whether bin gating is the trigger. |
+| g4 daily | 48 h daily use, pen, Krita, video, docked DP if available. Idle power (below). | No GMU-attributed or unattributed hard reset (attribution rule); wedges, if any, all recovered with the P1a log sequence. Idle power: candidate <= baseline. |
+| PR | Issue on TheMojoMan/oneplus-erhai-linux first, then PR to `7.3-rc5` with the ladder numbers | Accepted or explicit feedback. If no natural GMU wedge occurred in g2 + g4, the PR claims what was shown: the two window fixes, the GX genpd attached (g0), the restored RSCC/rpmh paths, CP-hang recovery (g1 logs), and marks "GMU-wedge recovery not yet observed on this unit"; the issue asks TheMojoMan and yzddmr6 for a wedge log from the new stack. Candidate `61-gpu-no-scm-init` runs after the PR is opened; its result goes into the issue, not into the series. |
+
+**Idle-power method (g4).** Screen on at a fixed brightness, Wi-Fi on, no apps, 30 min. Read `energy_now` (or `charge_now * voltage_now`) from `/sys/class/power_supply/erhai-adsp-bat/` at start and end; mW = delta / 0.5 h, converted to the same units. Measured once on the pinned package kernel (baseline, recorded here before g0) and once on the candidate with `control=auto`.
+
+## Bisection
+
+The candidate is an ordered stack of 13 commits, bottom to top:
+
+1. DT providers (gxclkctl `3d64000`, gpucc, adreno_smmu)
+2. revert of `9c9eefdef1` (gxclkctl un-bind)
+3. Qualcomm GPU/GMU nodes
+4. A830 catalog
+5. defconfig `SM_GPUCC_8750=y`
+6. `dev_warn` on GX attach failure (D6)
+7. revert `66500d1eef`
+8. revert `e9faa3ec42`
+9. revert `cbfce58e8e`
+10. revert `ef4d9b41ae`
+11. gate + `rpmh_off` removal
+12. revert `992da703ed` (cold boot)
+13. revert `9c3aa45c45` (IFPC)
+
+Commits 3 and 4 move together (the catalog's GEN1 entry and the DT reg sizes are one change; the OPP table needs the qfprom cell from the same patch). The defconfig (5) is applied to every prefix that boots a GPU.
+
+Export a prefix: `tools/export-patches.sh <kernel-dir> erhai-gpu-reference 60-gpu-reference --prefix N`. Order, each expected to boot:
+
+- `--prefix 2`: providers + gxclkctl bound; the port's GPU/GMU nodes and catalog unchanged. Must boot and show the GX genpd attached.
+- `--prefix 6`: plus Qualcomm's GPU/GMU nodes and catalog, defconfig and `dev_warn`; the port's GMU hacks still present. Must boot the GPU.
+- `--prefix 12`: the candidate minus IFPC (7-10 reverts and the gate removal included).
+- `--prefix 11`: minus IFPC and cold boot.
+- `--prefix 10`: minus IFPC, cold boot and the gate/`rpmh_off` removal.
+- no `--prefix`: the full stack (13), the candidate.
+
+Reading the results:
+
+- If g0 fails at prefix 2, the fault is in the provider nodes or the bound gxclkctl itself; approach A's content (windows only, port catalog kept) is the fallback PR.
+- If prefix 2 boots and prefix 6 does not, the fault is in the reference GPU/GMU/catalog adoption; restore the port's nodes one node at a time (GMU node first, then catalog).
+- If prefix 6 boots and the full stack does not, drop from the top one prefix at a time: 12 (IFPC), then 11 (cold boot), then 10 (gate).
+- If g0 passes but g1 fails, re-apply only `e9faa3ec42` to confirm RSCC is the lever.
+- Unattributed resets: follow clause 3 (A/B with `60-gpu-reference-ifpc-off`, which equals `--prefix 12`).
+
+## Results
+
+Fill from the tablet. Paste command output verbatim.
+
+### g-1 fuse (operator step, not run)
+
+| Field | Value |
+|---|---|
+| Kernel | |
+| Date | |
+| Raw (`sudo devmem2 0x221c8138 h`) | |
+| Masked (bits 0-9, `& 0x3ff`) | |
+| In `0, 252, 242, 232, 221, 190`? | |
+| Action | |
+
+Command: `sudo devmem2 0x221c8138 h`. The masked value is bits 0-9 per the qfprom cell (`& 0x3ff`); also record `& 0x1ff` if the two differ. If not in the table, go back to Task 3 step 10 for the mapping commit.
+
+### PON reason probe (Task 9)
+
+Pending operator probe (Task 9). Result: ____
+
+### g0 control (package kernel; operator step, not run)
+
+Command: `tablet/gpu-checks.sh g0 | tee g0-control.txt` on the package kernel with `MODE=once`. Paste below. Expect (1)-(5) PASS, `-19` present, `genpd:1` absent.
+
+```
+(pending)
+```
+
+### g0 candidate
+
+```
+(pending)
+```
+
+### Idle-power baseline (operator step, not run)
+
+Command, package kernel, screen on at fixed brightness, Wi-Fi on, no apps:
+
+```
+B=/sys/class/power_supply/erhai-adsp-bat
+cat $B/energy_now; date +%s     # start
+sleep 1800
+cat $B/energy_now; date +%s     # end
+```
+
+(or `charge_now` and `voltage_now` if `energy_now` is absent)
+
+| Kernel | Start | End | Delta | mW |
+|---|---|---|---|---|
+| package (baseline) | | | | |
+| candidate, `control=auto` | | | | |
+
+### Rung summary
+
+| Rung | Kernel | Date | Result | Notes |
+|---|---|---|---|---|
+| g-1 | | | | |
+| g0 control | | | | |
+| g0 | | | | |
+| g1 control | | | | |
+| g1 recover (5x + MODE=always 1x) | | | | |
+| g2 (cycles: ) | | | | |
+| g3 | | | | |
+| g4 (idle mW: ) | | | | |
+| PR | | | | |
