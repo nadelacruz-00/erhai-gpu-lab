@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 00:38:22 +0800
+Subject: [PATCH] drm/msm/a8xx: recover even when runtime PM is forbidden
+
+a8xx_recover() resets the GPU by dropping the last runtime PM reference
+and waiting for the CX GDSC to collapse. When userspace has written on
+to power/control, runtime suspend is forbidden, the final
+pm_runtime_put_sync() never suspends the device and recovery logs
+"cx gdsc didn't collapse" without resetting anything. The hang then
+fires again on the next hangcheck and the GPU never comes back.
+
+Allow runtime PM for the duration of the reset and restore the user's
+setting once the GPU is powered again.
+
+Tested on a OnePlus Pad 3 (SM8750): <to be filled after the g1 --pinned rung>
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index 038e95327d7..a6bc9a03732 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -938,6 +938,8 @@ void a8xx_recover(struct msm_gpu *gpu)
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+ 	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+ 	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
++	struct device *dev = &gpu->pdev->dev;
++	bool rpm_forbidden;
+ 	int active_submits;
+ 
+ 	adreno_dump_info(gpu);
+@@ -961,6 +963,17 @@ void a8xx_recover(struct msm_gpu *gpu)
+ 
+ 	pm_runtime_dont_use_autosuspend(&gpu->pdev->dev);
+ 
++	/*
++	 * Recovery resets the GPU by letting it runtime-suspend so that the CX
++	 * GDSC collapses. With power/control set to "on" runtime suspend is
++	 * forbidden: the final put below would never suspend the device, CX
++	 * would stay up, the hang would survive and recovery would loop.
++	 * Lift the restriction for the reset and restore it afterwards.
++	 */
++	rpm_forbidden = !dev->power.runtime_auto;
++	if (rpm_forbidden)
++		pm_runtime_allow(dev);
++
+ 	/* active_submit won't change until we make a submission */
+ 	mutex_lock(&gpu->active_lock);
+ 	active_submits = gpu->active_submits;
+@@ -994,6 +1007,9 @@ void a8xx_recover(struct msm_gpu *gpu)
+ 
+ 	pm_runtime_get_sync(&gpu->pdev->dev);
+ 
++	if (rpm_forbidden)
++		pm_runtime_forbid(dev);
++
+ 	gpu->active_submits = active_submits;
+ 	mutex_unlock(&gpu->active_lock);
+ 
