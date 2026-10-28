@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 15:16:55 +0800
+Subject: [PATCH] erhai config: build the SM8750 GPU clock controller in
+
+With CONFIG_SM_GPUCC_8750=m the gpucc driver only appears once a module
+loader runs, and an initramfs without one strands the whole GPU chain:
+the GMU and GPU probe defer on clocks and power domains that never
+arrive. Build it in so the GPU chain is available from early boot.
+
+Link: https://github.com/yzddmr6/linux-sm8750-erhai/commit/bd4f02e3f76e97abb7c015fefaa71ef6cb1b340e
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ arch/arm64/configs/erhai_defconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/configs/erhai_defconfig b/arch/arm64/configs/erhai_defconfig
+index c29ac34627f..52f61d77f03 100644
+--- a/arch/arm64/configs/erhai_defconfig
++++ b/arch/arm64/configs/erhai_defconfig
+@@ -827,7 +827,7 @@ CONFIG_SM_GPUCC_8350=m
+ CONFIG_SM_GPUCC_8450=m
+ CONFIG_SM_GPUCC_8550=m
+ CONFIG_SM_GPUCC_8650=m
+-CONFIG_SM_GPUCC_8750=m
++CONFIG_SM_GPUCC_8750=y
+ CONFIG_SM_TCSRCC_8550=y
+ CONFIG_SM_TCSRCC_8650=y
+ CONFIG_SM_TCSRCC_8750=y
