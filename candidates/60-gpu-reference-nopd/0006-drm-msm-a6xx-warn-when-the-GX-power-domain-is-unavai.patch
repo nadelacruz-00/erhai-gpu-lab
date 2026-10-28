@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 15:18:09 +0800
+Subject: [PATCH] drm/msm/a6xx: warn when the GX power domain is unavailable on
+ a8xx
+
+On the OnePlus Pad 3 the GMU's "gx" power domain attach failed
+silently from 2026-08-25 onwards. Every user of gmu->gxpd is guarded by
+IS_ERR_OR_NULL(), so the only symptom was an endless "hangcheck
+recover!" loop with "cx gdsc didn't collapse".
+
+Print a warning when the attach fails on a8xx so the missing domain is
+visible at probe time. No functional change.
+
+Tested on a OnePlus Pad 3 (SM8750): <to be filled after the g0 rung>
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 8ef7c164f9d..8699937d154 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -2690,6 +2690,10 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
+ 	 * crash
+ 	 */
+ 	gmu->gxpd = dev_pm_domain_attach_by_name(gmu->dev, "gx");
++	if (adreno_is_a8xx(adreno_gpu) && IS_ERR(gmu->gxpd))
++		dev_warn(gmu->dev,
++			 "GX power domain not available (%pe): hang recovery cannot collapse GX\n",
++			 gmu->gxpd);
+ 
+ 	/* Get the power levels for the GMU and GPU */
+ 	a6xx_gmu_pwrlevels_probe(gmu);

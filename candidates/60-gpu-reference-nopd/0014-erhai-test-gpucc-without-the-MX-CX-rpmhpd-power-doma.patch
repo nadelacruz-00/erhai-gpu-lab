@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 20:12:10 +0800
+Subject: [PATCH] erhai test: gpucc without the MX/CX rpmhpd power-domains
+ (black-screen bisection)
+
+Test-only commit for the lab: the ROCKNIX gpucc node makes gpucc an early
+genpd consumer of RPMHPD_MX/CX with low_svs required-opps; with
+fw_devlink=off this is suspected of dropping CX/MX under the
+bootloader-lit display. Never for upstream.
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/qcom/sm8750.dtsi | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+index 0a68719edea..f410d0f37bf 100644
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -3783,10 +3783,6 @@ gpucc: clock-controller@3d90000 {
+ 				 <&gcc GCC_GPU_GPLL0_CLK_SRC>,
+ 				 <&gcc GCC_GPU_GPLL0_DIV_CLK_SRC>;
+ 
+-			power-domains = <&rpmhpd RPMHPD_MX>,
+-					<&rpmhpd RPMHPD_CX>;
+-			required-opps = <&rpmhpd_opp_low_svs>,
+-					<&rpmhpd_opp_low_svs>;
+ 			#clock-cells = <1>;
+ 			#reset-cells = <1>;
+ 			#power-domain-cells = <1>;
