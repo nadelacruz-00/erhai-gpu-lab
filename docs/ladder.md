@@ -220,11 +220,9 @@ Fix: `60-gpu-reference-gpuccm` (full stack, `=m`) shows the desktop. SMMU faults
 
 Side finding: a local gcc-15 build (the package kernel b37) boots, so local builds are not inherently broken. The no-trace boots were this freeze, plus journald's 5-minute sync interval (`/etc/systemd/journald.conf.d/10-erhai-lab-sync.conf` now sets 10 s).
 
-### g0 candidate
+### g0 candidate (`60-gpu-reference-gpuccm` = the 12-commit stack with gpucc/gxclkctl as modules, local build, 2026-10-29, `MODE=once`)
 
-```
-(pending)
-```
+`sudo gpu-checks.sh g0`: no FAIL. PASS gxclkctl-bound (`gxclkctl-kaanapali`), gmu-genpd (`3d37000.gmu genpd:0,genpd:1`), gx-gdsc-summary (`gx_clkctl_gx_gdsc`), no-oops, no-minus19, no-gx-warn, renderer (Adreno 830), zap, pstore, hung-task, dpm-watchdog, suspend-hang-gpu, probe, pin-released, shell-on-gpu, runtime-suspends. INFO: unrelated-warnings 13, fuse unreadable via nvmem, pon-reason not-readable. MDSS SMMU faults: 0. GPU OPPs available: 160-1100 MHz (14 levels), so the speed bin did not gate the GPU off (g-1 satisfied in practice; the raw fuse value stays unread). The first run of this checker reported `FAIL renderer`: a checker bug (root's `eglinfo -B` lists Mesa's llvmpipe in the Device-platform device list). Fixed in `288adae`.
 
 ### Idle-power baseline (operator step, not run)
 
@@ -249,7 +247,7 @@ for i in $(seq 180); do echo "$(date +%s) $(cat $B/voltage_now) $(cat $B/current
 |---|---|---|---|---|
 | g-1 | | | | |
 | g0 control | lab-43 (package) | 2026-10-28 | as expected | renderer check fixed to accept `Adreno (TM) 830` |
-| g0 | | | | |
+| g0 | 60-gpu-reference (gpucc =m) | 2026-10-29 | PASS | all contract checks; GX genpd attached; black screen fixed by gpucc/gxclkctl =m |
 | g1 control | lab-43 (package) | 2026-10-28 | PASS (recovered) | CP hang caught by the sw hangcheck in about 5 s, one `hangcheck recover!`; no GMU wedge path exercised |
 | g1 recover (5x + MODE=always 1x) | | | | |
 | g2 (cycles: ) | | | | |
