@@ -173,16 +173,15 @@ Command, package kernel, screen on at fixed brightness, Wi-Fi on, no apps:
 
 ```
 B=/sys/class/power_supply/erhai-adsp-bat
-cat $B/energy_now; date +%s     # start
-sleep 1800
-cat $B/energy_now; date +%s     # end
+for i in $(seq 180); do echo "$(date +%s) $(cat $B/voltage_now) $(cat $B/current_now)"; sleep 10; done \
+  | awk '{p=$2*$3/1e9; s+=(p<0?-p:p); n++} END {printf "avg %.0f mW over %d samples\n", s/n, n}'
 ```
 
-(or `charge_now` and `voltage_now` if `energy_now` is absent)
+(this battery exposes only `voltage_now` and `current_now`, so power is sampled as V×I)
 
 | Kernel | Start | End | Delta | mW |
 |---|---|---|---|---|
-| package (baseline) | | | | |
+| package (baseline), lab-43, `MODE=once` | 1793177874 | 1793179672 | 180 samples, 4.24→4.17 V, 0.66-1.27 A discharge | **3639 mW avg** (`~/gpu-lab-evidence/idle-baseline.txt`, V×I every 10 s; this battery exposes no `energy_now`) |
 | candidate, `control=auto` | | | | |
 
 ### Rung summary
