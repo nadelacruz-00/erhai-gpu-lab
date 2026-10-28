@@ -56,6 +56,19 @@ class AssertConfig(unittest.TestCase):
                 with self.subTest(candidate=d.name, symbol=sym):
                     self.assertIn(sym, frag)
 
+    def test_candidate_60_fragment_is_asserted_verbatim(self):
+        frag = (CANDIDATES / "60-gpu-reference" / "extra.config").read_text()
+        self.assertIn("CONFIG_DPM_WATCHDOG_TIMEOUT=60\n", frag)
+        self.assertIn("# CONFIG_RESET_SIMPLE is not set\n", frag)
+        r = run(frag, frag)                       # a .config that matches the fragment exactly
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_dropped_dpm_watchdog_fails(self):
+        frag = (CANDIDATES / "60-gpu-reference" / "extra.config").read_text()
+        r = run(frag, frag.replace("CONFIG_DPM_WATCHDOG=y\n", "# CONFIG_DPM_WATCHDOG is not set\n"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("DPM_WATCHDOG", r.stderr)
+
 
 class Candidates(unittest.TestCase):
     def test_base_sha_is_a_full_commit(self):
