@@ -57,6 +57,27 @@ class Docs(unittest.TestCase):
         self.assertNotIn("igt-recovery/igt/", ladder)
         self.assertIn("erhai-gpu-lab report", (REPO_ROOT / "README.md").read_text())
 
+    def test_runbook_details(self):
+        ladder = (REPO_ROOT / "docs" / "ladder.md").read_text()
+        runbook = ladder[ladder.index("## Runbook"):ladder.index("## Baseline")]
+        for needle in ["sudo erhai-gpu-lab queue g0 --expect <candidate|package>",
+                       "as the normal user", "calls `sudo` itself",
+                       "`whoami`, `status`, `soak status` and `report` need no root",
+                       "`gh auth login`", "outside `candidates/<candidate>/`",
+                       "`lab-<candidate>-<run>`",
+                       "`prev=none`", "`prev=unknown`", "`unlogged=<boot8>,...`",
+                       "type `yes`", "`--yes`",
+                       "`soak stop` closes the window",
+                       "g1-summary-<kver>-<boot8>-2.txt"]:
+            self.assertIn(needle, runbook)
+        self.assertNotIn("queue <label>", ladder)
+
+    def test_readme_ship_candidate_and_root(self):
+        readme = (REPO_ROOT / "README.md").read_text()
+        for needle in ["tools/ship-candidate.sh", "as the normal user", "`gh auth login`",
+                       "need no root"]:
+            self.assertIn(needle, readme)
+
 
 class GitIgnore(unittest.TestCase):
     def test_superpowers_is_ignored(self):

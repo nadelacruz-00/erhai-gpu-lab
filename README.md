@@ -27,7 +27,14 @@ stack; only a candidate that passes its rung becomes a PR to the port.
   builds IGT `msm_recovery`; `erhai-gpu-lab status` shows the booted candidate,
   the pin mode, the queued g0 and recent boots; `erhai-gpu-lab report [--out
   FILE]` prints Markdown of all evidence (run it with sudo to include the soak
-  wedge lines). The commands per rung are in the ladder's Runbook.
+  wedge lines). `whoami`, `status`, `soak status` and `report` need no root;
+  every other subcommand runs with sudo. The commands per rung are in the
+  ladder's Runbook.
+- **`tools/ship-candidate.sh <kernel-dir> <branch> <candidate>`** goes from a
+  kernel branch to a queued g0: it exports the patches, pushes, waits for CI,
+  fetches that run's release and queues g0. Run it as the normal user (it calls
+  sudo itself) after `gh auth login`, with no changes outside
+  `candidates/<candidate>/`.
 
 ## Ladder
 
