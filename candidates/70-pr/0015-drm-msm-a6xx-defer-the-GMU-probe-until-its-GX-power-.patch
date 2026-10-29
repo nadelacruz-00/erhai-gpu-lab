@@ -21,7 +21,11 @@ Defer the GMU like the qmp_get() deferral just above, so the GPU binds
 once the domain exists. A GMU without a "gx" domain in its node still
 gets NULL and probes as before.
 
-Tested on a OnePlus Pad 3 (SM8750): <to be filled after the boot test>
+Tested on a OnePlus Pad 3 (SM8750) with erhai_defconfig: without this
+change one boot came up with "genpd:1" missing and the warning above;
+with it the GMU attaches both domains, the GPU binds about 10 ms later
+than before (2.628 s against 2.617 s), and IGT msm_recovery gpu-fault
+recovers.
 
 Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
 ---
