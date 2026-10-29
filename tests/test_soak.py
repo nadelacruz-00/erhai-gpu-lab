@@ -403,7 +403,7 @@ class StartStopStatusTest(StateTest):
         self.assertNotIn("running one", out)
 
     def test_tick_removes_a_stale_live_file_before_the_window(self):
-        self.start_soak()
+        (self.state / "soak.json").write_text(json.dumps({"start_boot": A, "start_line": 1}))
         live = self.state / "soak-live.txt"
         live.write_text("started=1 cycles=681 suspend=681 resume=681\n")
         seen = []
