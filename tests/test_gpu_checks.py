@@ -193,8 +193,8 @@ class GpuChecks(unittest.TestCase):
             (d / "bin").mkdir()
             (d / "tmp").mkdir()
             fake = d / "bin" / "trace-cmd"
-            fake.write_text('#!/bin/sh\n[ "$1" = report ] && cat "%s"\nexit 0\n'
-                            % (FIX / "trace" / "report.txt"))
+            fake.write_text('#!/bin/sh\nls "$TMPDIR" >"%s"\n[ "$1" = report ] && cat "%s"\nexit 0\n'
+                            % (d / "seen", FIX / "trace" / "report.txt"))
             fake.chmod(0o755)
             e = {"PATH": f"{d / 'bin'}:{os.environ['PATH']}", "TMPDIR": str(d / "tmp")}
             r = subprocess.run([str(SCRIPT), "cycles", "1"], env=e, capture_output=True, text=True)
@@ -202,6 +202,8 @@ class GpuChecks(unittest.TestCase):
             self.assertEqual(r.stderr, "")
             self.assertIn("cycles=7 suspend=7 resume=7", r.stdout)
             self.assertEqual(list((d / "tmp").iterdir()), [])
+            # a distinct name, so a /tmp/tmp.* cleanup cannot remove a live window's trace
+            self.assertRegex((d / "seen").read_text(), r"^erhai-cycles\.\w+$")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 [Unit]
-Description=erhai GPU lab: one 50-minute g2 runtime-PM cycle window
+Description=erhai GPU lab: one 10-minute g2 runtime-PM cycle window
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/erhai-gpu-lab soak tick
-# one window is 3000 s
-TimeoutStartSec=3300
+# one window is 600 s
+TimeoutStartSec=900

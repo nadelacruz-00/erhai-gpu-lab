@@ -1,9 +1,9 @@
 [Unit]
-Description=erhai GPU lab: g2 soak, one cycle window per hour
+Description=erhai GPU lab: g2 soak, one 10-minute cycle window every 11 minutes
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=55min
+OnUnitActiveSec=11min
 Unit=erhai-gpu-lab-soak.service
 
 [Install]

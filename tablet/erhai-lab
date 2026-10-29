@@ -24,8 +24,8 @@ One stdlib-only tool, forked from erhai-sleep-lab. Subcommands:
   power [--minutes N] (root) sample the battery V*I while idle on battery and compare
                       the average with the 3639 mW baseline (default 30 minutes)
   soak start|stop|tick|status
-                      g2: count GPU runtime-PM cycles across reboots with an hourly
-                      timer; start/stop/tick need root, status shows hours, cycles,
+                      g2: count GPU runtime-PM cycles across reboots in 10-minute
+                      windows; start/stop/tick need root, status shows hours, cycles,
                       boots, resets and GPU wedge lines
   report [--out FILE] all evidence as Markdown for the ladder Results (no root; run as
                       root to include the soak's kernel wedge lines)
@@ -902,7 +902,7 @@ def cmd_power(args: argparse.Namespace) -> int:
 SOAK_FILE = "soak.json"
 SOAK_CYCLES_LOG = "soak-cycles.log"
 SOAK_TIMER = "erhai-gpu-lab-soak.timer"
-SOAK_WINDOW_S = 3000
+SOAK_WINDOW_S = 600
 SOAK_TARGET_CYCLES = 1000
 WEDGE_RE = re.compile(r"GMU OOB|HFI .*timed out|hangcheck recover!|a8xx_recover|"
                       r"cx gdsc didn't collapse")
@@ -1065,7 +1065,7 @@ def soak_start() -> int:
         raise LabError(f"cannot empty {STATE_DIR / SOAK_CYCLES_LOG}: {e}; "
                        "the soak timer is already enabled") from e
     print(f"soak started on boot {start['start_boot'][:8]}; one {SOAK_WINDOW_S} s "
-          f"window about every hour, goal {SOAK_TARGET_CYCLES} cycles "
+          f"window about every 11 minutes, goal {SOAK_TARGET_CYCLES} cycles "
           "(erhai-gpu-lab soak status)")
     return 0
 

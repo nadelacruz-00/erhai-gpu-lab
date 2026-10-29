@@ -154,9 +154,9 @@ class TickTest(StateTest):
              self.fake_run("cycles=412 suspend=412 resume=413\n") as run:
             rc, _, _ = self.run_cmd("tick")
         self.assertEqual(rc, 0)
-        self.assertEqual(run.call_args.args[0], ["/x/gpu-checks.sh", "cycles", "3000"])
+        self.assertEqual(run.call_args.args[0], ["/x/gpu-checks.sh", "cycles", "600"])
         self.assertEqual((self.state / "soak-cycles.log").read_text(),
-                         window(A, 5) + window(B, 412))
+                         window(A, 5) + window(B, 412, secs=600))
 
     def test_failed_window_is_not_appended(self):
         self.start_soak()
@@ -369,12 +369,12 @@ class UnitFilesTest(unittest.TestCase):
     def test_timer_and_service_files(self):
         timer = (TABLET / "erhai-gpu-lab-soak.timer").read_text().splitlines()
         service = (TABLET / "erhai-gpu-lab-soak.service").read_text().splitlines()
-        for line in ("OnBootSec=5min", "OnUnitActiveSec=55min",
+        for line in ("OnBootSec=5min", "OnUnitActiveSec=11min",
                      "Unit=erhai-gpu-lab-soak.service"):
             self.assertIn(line, timer)
         for line in ("Type=oneshot",
                      "ExecStart=/usr/local/sbin/erhai-gpu-lab soak tick",
-                     "TimeoutStartSec=3300"):
+                     "TimeoutStartSec=900"):
             self.assertIn(line, service)
         self.assertNotIn("[Install]", "\n".join(service))
 
