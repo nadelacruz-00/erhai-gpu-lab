@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: TheMojoMan <themojoman@gmx.net>
+Date: Thu, 29 Oct 2026 16:00:01 +0800
+Subject: [PATCH] drm/msm/a6xx: fix the GMU probe-deferral cleanup
+
+The deferral for the GMU's "gx" power domain is hit whenever the GMU
+probes before gxclkctl is ready: drm/msm is built in and gxclkctl is a
+module, so a6xx_gmu_init() can get -EPROBE_DEFER, run detach_gxpd and
+be retried once the module has loaded.
+
+That cleanup path is not defer-safe:
+
+  - it calls device_link_del() on the cxpd link. device_link_add()
+    created it without DL_FLAG_STATELESS, i.e. as a managed link, and
+    dropping a managed link is not allowed while its consumer is
+    registered, so each deferral logged
+
+      WARNING: Unable to drop a managed device link reference
+
+    The link is not ours to drop anyway: dev_pm_domain_detach() just
+    below unregisters the supplier (the genpd virtual device) and the
+    link is purged with it, which a6xx_gmu_remove() already relies on.
+
+  - it never undoes the pm_runtime_enable() done at the top of the
+    function, so the retry logged
+
+      platform 3d37000.gmu: Unbalanced pm_runtime_enable!
+
+    Every error path of a6xx_gmu_init() is after that enable, so undo
+    it once at err_put_device.
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 21b219fbfae..f9ffe6c66c3 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -2497,7 +2497,10 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
+ 	if (!IS_ERR_OR_NULL(gmu->qmp))
+ 		qmp_put(gmu->qmp);
+ 
+-	device_link_del(link);
++	/*
++	 * The cxpd link is a managed one and cannot be dropped while the GMU is
++	 * registered; it is purged when cxpd, a virt device, is detached below.
++	 */
+ 
+ detach_cxpd:
+ 	dev_pm_domain_detach(gmu->cxpd, false);
+@@ -2510,6 +2513,9 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
+ err_memory:
+ 	a6xx_gmu_memory_free(gmu);
+ err_put_device:
++	/* Every error above happens after pm_runtime_enable() */
++	pm_runtime_disable(gmu->dev);
++
+ 	/* Drop reference taken in of_find_device_by_node */
+ 	put_device(gmu->dev);
+ 
