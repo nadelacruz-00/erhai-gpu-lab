@@ -1142,11 +1142,13 @@ def soak_status() -> int:
     s = soak_summary(cycles_log, boots, start_line, kernel_logs, start_boot, stop_line)
     print("soak: running" if stop_line is None else "soak: stopped")
     print(f"hours: {s['hours']:.2f}")
-    print(f"cycles: {s['cycles']} (>= {SOAK_TARGET_CYCLES}: "
-          f"{'yes' if s['cycles_ok'] else 'no'})")
     live = _live_window(STATE_DIR / SOAK_LIVE) if stop_line is None else None
+    total = s["cycles"] + (live[0] if live else 0)
+    print(f"cycles: {total} (>= {SOAK_TARGET_CYCLES}: "
+          f"{'yes' if total >= SOAK_TARGET_CYCLES else 'no'})")
     if live is not None:
-        print(f"live: +{live[0]} cycles in the running window (updated {live[1]} s ago)")
+        print(f"  {s['cycles']} in finished windows + {live[0]} in the running one "
+              f"(updated {live[1]} s ago)")
     print(f"boots: {s['boots']}")
     for bid, kind in s["resets"]:
         print(f"reset {bid[:8]} {kind}")

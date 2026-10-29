@@ -375,14 +375,23 @@ class StartStopStatusTest(StateTest):
         with mock.patch.object(lab, "_journal", return_value=None):
             rc, out, _ = self.run_cmd("status")
         self.assertEqual(rc, 0)
-        self.assertIn("cycles: 129 (>= 1000: no)", out.splitlines())
-        self.assertRegex(out, r"(?m)^live: \+57 cycles in the running window \(updated \d+ s ago\)$")
+        self.assertIn("cycles: 186 (>= 1000: no)", out.splitlines())
+        self.assertRegex(out, r"(?m)^  129 in finished windows \+ 57 in the running one "
+                              r"\(updated \d+ s ago\)$")
+
+    def test_running_window_counts_toward_the_target(self):
+        (self.state / "soak.json").write_text(json.dumps({"start_boot": A, "start_line": 1}))
+        (self.state / "soak-cycles.log").write_text(window(A, 900, secs=600))
+        (self.state / "soak-live.txt").write_text("started=1 cycles=100 suspend=100 resume=100\n")
+        with mock.patch.object(lab, "_journal", return_value=None):
+            _, out, _ = self.run_cmd("status")
+        self.assertIn("cycles: 1000 (>= 1000: yes)", out.splitlines())
 
     def test_status_without_live_file_has_no_live_line(self):
         (self.state / "soak.json").write_text(json.dumps({"start_boot": A, "start_line": 1}))
         with mock.patch.object(lab, "_journal", return_value=None):
             _, out, _ = self.run_cmd("status")
-        self.assertNotIn("live:", out)
+        self.assertNotIn("running one", out)
 
     def test_parser_shape(self):
         p = lab.build_parser()
