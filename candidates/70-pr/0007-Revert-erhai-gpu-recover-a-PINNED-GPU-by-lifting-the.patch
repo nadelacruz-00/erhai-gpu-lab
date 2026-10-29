@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 15:19:43 +0800
+Subject: [PATCH] Revert "erhai gpu: recover a PINNED GPU by lifting the
+ runtime-PM block"
+
+This reverts commit 66500d1eef30.
+
+The original papered over a recover path that could never reset the GMU
+because the sm8750 GPU register windows were mis-sized (the gxclkctl node
+mapped only 4 KiB, which 9c9eefdef1 answered by unbinding the GX GDSC
+controller, and the RSCC at gpu+0x50000 sat outside the GPU node's 0x40000
+kgsl_3d0_reg_memory window); with the windows fixed in the device tree the
+stock a8xx_recover() teardown is used again.
+
+Tested on a OnePlus Pad 3 (SM8750) with the whole series: the GPU
+powers up at probe (no -19), the CX GDSC collapses on runtime suspend,
+IGT msm_recovery gpu-fault recovers in 5 of 5 runs, and 2.5 h of desktop
+use ran 3,227 runtime-PM cycles without a GMU wedge.
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/adreno/a8xx_gpu.c | 41 +--------------------------
+ 1 file changed, 1 insertion(+), 40 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+index 39338307bda..038e95327d7 100644
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -939,7 +939,6 @@ void a8xx_recover(struct msm_gpu *gpu)
+ 	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+ 	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
+ 	int active_submits;
+-	bool pinned;
+ 
+ 	adreno_dump_info(gpu);
+ 
+@@ -972,34 +971,6 @@ void a8xx_recover(struct msm_gpu *gpu)
+ 	 */
+ 	gpu->active_submits = 0;
+ 
+-	/*
+-	 * erhai: this pad runs the Adreno PINNED always-active -- erhai-gpu-pin.sh
+-	 * writes "on" to /sys/devices/platform/soc@0/3d00000.gpu/power/control,
+-	 * which is pm_runtime_forbid(): runtime_auto becomes false and one extra
+-	 * usage_count is taken.
+-	 *
+-	 * While that block is in force the pm_runtime_put_sync() below CANNOT
+-	 * suspend the GPU, so a6xx_gmu_pm_suspend() -> a6xx_gmu_stop() never runs,
+-	 * the GMU is never torn down, the CX genpd therefore never powers off and
+-	 * the pd_gate completion never fires -- recovery then "finishes" without
+-	 * having reset anything ("cx gdsc didn't collapse"), the GMU stays wedged
+-	 * and every later hangcheck recover repeats the same no-op forever.  That
+-	 * is why the pinned GPU cannot be recovered from a hang (gpu-MEMORY
+-	 * 2026-09-22 §1: endless "hangcheck recover!" / "preemption timed out"
+-	 * until a hard reset).
+-	 *
+-	 * Lift the pin for the teardown and put it back after the resume, so the
+-	 * driver runs its normal, tested suspend/resume recovery (GMU force-off,
+-	 * CX/GX collapse, CM3 re-boot via a6xx_gmu_start()).  A device that is not
+-	 * pinned (runtime_auto already true) is left completely alone.
+-	 */
+-	pinned = !gpu->pdev->dev.power.runtime_auto;
+-	if (pinned) {
+-		DRM_DEV_INFO(&gpu->pdev->dev,
+-			"erhai: GPU is PINNED (power/control=on), lifting runtime-PM block for the recover teardown\n");
+-		pm_runtime_allow(&gpu->pdev->dev);
+-	}
+-
+ 	reinit_completion(&gmu->pd_gate);
+ 	dev_pm_genpd_add_notifier(gmu->cxpd, &gmu->pd_nb);
+ 	dev_pm_genpd_synced_poweroff(gmu->cxpd);
+@@ -1012,9 +983,7 @@ void a8xx_recover(struct msm_gpu *gpu)
+ 	pm_runtime_put_sync(&gpu->pdev->dev);
+ 
+ 	if (!wait_for_completion_timeout(&gmu->pd_gate, msecs_to_jiffies(1000)))
+-		DRM_DEV_ERROR(&gpu->pdev->dev,
+-			"cx gdsc didn't collapse (runtime PM %s) -- GMU NOT reset\n",
+-			pinned ? "was pinned, lifted" : "was already allowed");
++		DRM_DEV_ERROR(&gpu->pdev->dev, "cx gdsc didn't collapse\n");
+ 
+ 	dev_pm_genpd_remove_notifier(gmu->cxpd);
+ 
+@@ -1025,14 +994,6 @@ void a8xx_recover(struct msm_gpu *gpu)
+ 
+ 	pm_runtime_get_sync(&gpu->pdev->dev);
+ 
+-	/*
+-	 * Restore the always-active pin this pad boots with (see above).  The
+-	 * device is active again by now, so pm_runtime_forbid() only re-takes the
+-	 * pin's usage_count and flips runtime_auto back off.
+-	 */
+-	if (pinned)
+-		pm_runtime_forbid(&gpu->pdev->dev);
+-
+ 	gpu->active_submits = active_submits;
+ 	mutex_unlock(&gpu->active_lock);
+ 

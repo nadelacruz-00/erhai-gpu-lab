@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Wed, 16 Sep 2026 16:48:09 +0800
+Subject: [PATCH] dt-bindings: display/msm: Document Adreno 830 GPU/GMU
+
+Hand-applied from the A830 submission series (20260809-pakala-gpu,
+patch 2/6); context drift against v7.2 only.
+
+[Backport onto the erhai port: the two gpu.yaml lists also carry
+ qcom,adreno-44050a01 (Adreno 840); add 44050001 beside it.]
+
+Assisted-by: LLM
+Link: https://github.com/yzddmr6/linux-sm8750-erhai/commit/8c7f018a7e8a5de033a523e8eb0ce8b4ddd2c89c
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ Documentation/devicetree/bindings/display/msm/gmu.yaml | 4 +++-
+ Documentation/devicetree/bindings/display/msm/gpu.yaml | 2 ++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/display/msm/gmu.yaml b/Documentation/devicetree/bindings/display/msm/gmu.yaml
+index 9e459f12ce3..f1e609b7e1c 100644
+--- a/Documentation/devicetree/bindings/display/msm/gmu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/gmu.yaml
+@@ -305,7 +305,9 @@ allOf:
+       properties:
+         compatible:
+           contains:
+-            const: qcom,adreno-gmu-810.0
++            enum:
++              - qcom,adreno-gmu-810.0
++              - qcom,adreno-gmu-830.1
+     then:
+       properties:
+         reg:
+diff --git a/Documentation/devicetree/bindings/display/msm/gpu.yaml b/Documentation/devicetree/bindings/display/msm/gpu.yaml
+index e5efe2d35dd..1c4a6f17c1b 100644
+--- a/Documentation/devicetree/bindings/display/msm/gpu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/gpu.yaml
+@@ -414,6 +414,7 @@ allOf:
+           contains:
+             enum:
+               - qcom,adreno-44010000
++              - qcom,adreno-44050001
+               - qcom,adreno-44050a01
+               - qcom,adreno-44070001
+     then:
+@@ -451,6 +452,7 @@ allOf:
+               - qcom,adreno-43050c01
+               - qcom,adreno-43051401
+               - qcom,adreno-44010000
++              - qcom,adreno-44050001
+               - qcom,adreno-44050a01
+               - qcom,adreno-44070001
+ 

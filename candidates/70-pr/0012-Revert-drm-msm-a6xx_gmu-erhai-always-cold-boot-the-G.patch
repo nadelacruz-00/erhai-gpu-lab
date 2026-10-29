@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 15:21:09 +0800
+Subject: [PATCH] Revert "drm/msm/a6xx_gmu: erhai: always cold-boot the GMU on
+ a8xx (fix intermittent runtime-resume hang)"
+
+This reverts commit 992da703edcd.
+
+The runtime-resume hangs the original blamed on warm boot came from the
+mis-sized device tree windows (the RSCC at gpu+0x50000 outside the GPU
+node's 0x40000 kgsl_3d0_reg_memory window, and the GX GDSC left unbound by
+9c9eefdef1 because the gxclkctl node mapped only 4 KiB), which kept the GMU
+from being properly power collapsed; with the windows fixed a8xx again
+picks warm or cold boot from CX_MISC_TCM_RET_CNTL like a7xx.
+
+Tested on a OnePlus Pad 3 (SM8750) with the whole series: the GPU
+powers up at probe (no -19), the CX GDSC collapses on runtime suspend,
+IGT msm_recovery gpu-fault recovers in 5 of 5 runs, and 2.5 h of desktop
+use ran 3,227 runtime-PM cycles without a GMU wedge.
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 18 +-----------------
+ 1 file changed, 1 insertion(+), 17 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 2c7a8f606d0..273baf303a9 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -1368,23 +1368,7 @@ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ 	enable_irq(gmu->gmu_irq);
+ 
+ 	/* Check to see if we are doing a cold or warm boot */
+-	if (adreno_is_a8xx(adreno_gpu)) {
+-		/*
+-		 * erhai: always cold-boot the GMU on a8xx. The warm-boot path
+-		 * (TCM_RET_CNTL==1 -> skip the firmware reload) assumes the GMU
+-		 * firmware is still resident in DTCM across the runtime-PM
+-		 * suspend, but the driver only programs TCM retention for a7xx
+-		 * (a6xx_gmu_fw_start), so on a8xx the DTCM is not guaranteed to
+-		 * survive and the warm boot occasionally runs garbage -> the CM3
+-		 * never sets FW_INIT_RESULT and a6xx_gmu_start times out
+-		 * ("GMU firmware initialization timed out" + GMU OOB GPU_SET
+-		 * storm -> hangcheck -> frozen display; first spontaneous hang
+-		 * with the GPU at runtime-PM auto, 2026-09-12). Reloading the
+-		 * firmware on every resume is deterministic and removes the
+-		 * DTCM-retention dependence entirely.
+-		 */
+-		status = GMU_COLD_BOOT;
+-	} else if (adreno_is_a7xx(adreno_gpu)) {
++	if (adreno_is_a7xx(adreno_gpu) || adreno_is_a8xx(adreno_gpu)) {
+ 		status = a6xx_cx_misc_read(a6xx_gpu, REG_A7XX_CX_MISC_TCM_RET_CNTL) == 1 ?
+ 			GMU_WARM_BOOT : GMU_COLD_BOOT;
+ 	} else if (gmu->legacy) {
