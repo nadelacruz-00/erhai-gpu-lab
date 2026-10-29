@@ -98,5 +98,5 @@ jobs:
           stack=$(cat "candidates/$CAND/STACK" 2>/dev/null || echo none)
           gh release create "$tag" out/"$CAND"/* \
             --title "$CAND #${{ github.run_number }} ($KVER)" \
-            --notes "Candidate \`$CAND\`, kernelrelease \`$KVER\`, base tree \`$(cat candidates/BASE_SHA)\`, lab commit \`${GITHUB_SHA}\`, stack \`$stack\` ($PATCHES patches). Install with \`erhai-gpu-lab fetch $CAND\`; never with dpkg." \
+            --notes "Candidate \`$CAND\`, kernelrelease \`$KVER\`, base tree \`$(cat candidates/$CAND/BASE_SHA 2>/dev/null || cat candidates/BASE_SHA)\`, lab commit \`${GITHUB_SHA}\`, stack \`$stack\` ($PATCHES patches). Install with \`erhai-gpu-lab fetch $CAND\`; never with dpkg." \
             --target "$GITHUB_SHA"

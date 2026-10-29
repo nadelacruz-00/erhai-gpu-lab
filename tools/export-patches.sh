@@ -2,25 +2,31 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Regenerate candidates/<candidate>/*.patch from BASE_SHA..<branch> of a kernel
 # checkout, so CI builds exactly what the branch holds. Records the tip in STACK.
-# A candidate without cmdline/extra.config gets 60-gpu-reference's.
+# A candidate without cmdline/extra.config gets 60-gpu-reference's. The base is
+# candidates/<candidate>/BASE_SHA when present (--base SHA records one), else
+# candidates/BASE_SHA.
 set -euo pipefail
 
-usage() { echo "usage: $0 <kernel-dir> <branch> <candidate> [--prefix N]" >&2; exit 64; }
+usage() { echo "usage: $0 <kernel-dir> <branch> <candidate> [--prefix N] [--base SHA]" >&2; exit 64; }
 
 [ $# -ge 3 ] || usage
 K=$1 BRANCH=$2 CAND=$3
 shift 3
-PREFIX=
+PREFIX= NEW_BASE=
 while [ $# -gt 0 ]; do
     case $1 in
         --prefix) [ $# -ge 2 ] || usage; PREFIX=$2; shift 2 ;;
+        --base) [ $# -ge 2 ] || usage; NEW_BASE=$2; shift 2 ;;
         *) usage ;;
     esac
 done
 case $PREFIX in ''|*[!0-9]*) [ -z "$PREFIX" ] || usage ;; esac
+[[ -z $NEW_BASE || $NEW_BASE =~ ^[0-9a-f]{40}$ ]] || usage
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-BASE=$(tr -d '[:space:]' < "$ROOT/candidates/BASE_SHA")
+BASE_FILE=$ROOT/candidates/$CAND/BASE_SHA
+[ -f "$BASE_FILE" ] || BASE_FILE=$ROOT/candidates/BASE_SHA
+BASE=${NEW_BASE:-$(tr -d '[:space:]' < "$BASE_FILE")}
 
 git -C "$K" rev-parse --git-dir >/dev/null 2>&1 \
     || { echo "$K is not a git repository" >&2; exit 2; }
@@ -58,6 +64,7 @@ git -C "$K" -c diff.noprefix=false -c diff.mnemonicPrefix=false format-patch \
     --src-prefix=a/ --dst-prefix=b/ --zero-commit --no-signature --no-numbered \
     -o "$TMP/" "$BASE..$END" > "$TMP.list"
 git -C "$K" rev-parse "$END" > "$TMP/STACK"
+[ -z "$NEW_BASE" ] || echo "$NEW_BASE" > "$TMP/BASE_SHA"
 rm -f "$OUT"/*.patch
 mv "$TMP"/* "$OUT"/
 sed "s|^$TMP/|$OUT/|" "$TMP.list"

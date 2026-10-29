@@ -26,7 +26,10 @@ BUILD_ID=${2:-local}
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CDIR=$REPO_ROOT/candidates/$CAND
 KERNEL_REPO=${KERNEL_REPO:-https://github.com/TheMojoMan/oneplus-erhai-linux.git}
-BASE_SHA=$(tr -d '[:space:]' < "$REPO_ROOT/candidates/BASE_SHA")
+# a candidate may pin its own base tree; most use the global one
+BASE_FILE=$REPO_ROOT/candidates/$CAND/BASE_SHA
+[ -f "$BASE_FILE" ] || BASE_FILE=$REPO_ROOT/candidates/BASE_SHA
+BASE_SHA=$(tr -d '[:space:]' < "$BASE_FILE")
 WORK=${WORK:-$REPO_ROOT/work}
 TREE=$WORK/linux
 OUT=$REPO_ROOT/out/$CAND

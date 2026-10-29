@@ -24,8 +24,10 @@ case $INTERVAL in ''|*[!0-9.]*) usage ;; esac
 
 LAB=$(cd "$(dirname "$0")/.." && pwd)
 [ -d "$LAB/candidates/$CAND" ] || { echo "build-local: no candidate dir candidates/$CAND" >&2; exit 2; }
-git -C "$KDIR" cat-file -e "$(tr -d '[:space:]' < "$LAB/candidates/BASE_SHA")^{commit}" 2>/dev/null ||
-    { echo "build-local: $KDIR does not have BASE_SHA; fetch it there first" >&2; exit 2; }
+BASE_REL=candidates/$CAND/BASE_SHA
+[ -f "$LAB/$BASE_REL" ] || BASE_REL=candidates/BASE_SHA
+git -C "$KDIR" cat-file -e "$(tr -d '[:space:]' < "$LAB/$BASE_REL")^{commit}" 2>/dev/null ||
+    { echo "build-local: $KDIR does not have $BASE_REL; fetch it there first" >&2; exit 2; }
 BUILD=${BUILD_CMD:-$LAB/ci/build-candidate.sh}   # test seam
 
 STATE=$LAB/out/.build-local

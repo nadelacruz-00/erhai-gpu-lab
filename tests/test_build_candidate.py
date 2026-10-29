@@ -57,6 +57,15 @@ class BuildCandidate(unittest.TestCase):
         self.assertEqual(r.stdout.strip(),
                          "console=tty0 quiet erhai_lab.candidate=cand erhai_lab.build=42")
 
+    def test_fetches_the_candidate_base_when_it_has_one(self):
+        (self.cdir / "BASE_SHA").write_text("a" * 40 + "\n")
+        r = self.run_build()
+        self.assertIn("fetching /nonexistent/repo @ " + "a" * 40, r.stdout)
+
+    def test_fetches_the_global_base_otherwise(self):
+        r = self.run_build()
+        self.assertIn("fetching /nonexistent/repo @ " + "f" * 40, r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

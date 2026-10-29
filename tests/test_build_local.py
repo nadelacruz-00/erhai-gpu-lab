@@ -68,7 +68,14 @@ class BuildLocal(unittest.TestCase):
         (self.lab / "candidates" / "BASE_SHA").write_text("0" * 40 + "\n")
         r = self.run_script("cand", "--kernel-dir", str(self.kernel))
         self.assertEqual(r.returncode, 2)
-        self.assertIn("does not have BASE_SHA", r.stderr)
+        self.assertIn("does not have candidates/BASE_SHA", r.stderr)
+
+    def test_candidate_base_is_checked_in_the_kernel_dir(self):
+        self.fake_build("exit 0\n")
+        (self.lab / "candidates" / "cand" / "BASE_SHA").write_text("0" * 40 + "\n")
+        r = self.run_script("cand", "--kernel-dir", str(self.kernel))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("does not have candidates/cand/BASE_SHA", r.stderr)
 
     def test_success_records_time_and_object_count(self):
         self.fake_build('[ "$KERNEL_REPO" = "%s" ] || exit 9\n'

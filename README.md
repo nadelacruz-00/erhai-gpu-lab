@@ -13,7 +13,8 @@ stack; only a candidate that passes its rung becomes a PR to the port.
 ## How it works
 
 - **CI** (`.github/workflows/kernel.yml`) builds each directory under
-  `candidates/` from the pinned commit in `candidates/BASE_SHA`, with the
+  `candidates/` from the pinned commit in `candidates/BASE_SHA` (or the
+  candidate's own `BASE_SHA`, recorded with `export-patches.sh --base`), with the
   tree's own `build-kernel.sh`, the candidate's patches and `extra.config`,
   and a `-lab-<candidate>` kernelrelease. Every requested config symbol is
   asserted in the final `.config`. The result is a Release: a UKI, a modules

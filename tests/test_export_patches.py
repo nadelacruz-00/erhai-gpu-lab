@@ -105,6 +105,24 @@ class ExportPatches(unittest.TestCase):
         self.assertIn("60-gpu-reference", r.stderr)
         self.assertFalse(list(self.cand.glob("*.patch")) if self.cand.exists() else [])
 
+    def test_base_option_records_the_candidate_base(self):
+        a = git(self.kernel, "rev-parse", "work~2")
+        r = self.run_export("work", "--base", a)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(list(self.cand.glob("*.patch"))), 2)   # b, c
+        self.assertEqual((self.cand / "BASE_SHA").read_text(), a + "\n")
+
+    def test_candidate_base_overrides_the_global_one(self):
+        self.cand.mkdir()
+        (self.cand / "BASE_SHA").write_text(git(self.kernel, "rev-parse", "work~1") + "\n")
+        r = self.run_export("work")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(list(self.cand.glob("*.patch"))), 1)   # c
+
+    def test_base_option_must_be_a_full_sha(self):
+        r = self.run_export("work", "--base", "work~2")
+        self.assertEqual(r.returncode, 64)
+
     def test_branch_not_on_base_fails(self):
         r = self.run_export("orphan")
         self.assertNotEqual(r.returncode, 0)
