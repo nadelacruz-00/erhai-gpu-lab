@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -207,6 +208,30 @@ class GpuChecks(unittest.TestCase):
             self.assertEqual((ev / "enable").read_text(), "0\n")   # disabled on exit
             self.assertRegex((d / "live").read_text(),
                              r"^started=\d+ cycles=7 suspend=7 resume=7\n$")
+
+    def test_cycles_live_file_refreshes_without_events(self):
+        # an idle GPU sends nothing; the live file still shows the window is alive
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            ev = self.fake_tracefs(d)
+            pipe = ev.parents[2] / "trace_pipe"
+            pipe.unlink()
+            os.mkfifo(pipe)                 # no writer: cat blocks, no events arrive
+            e = {"PATH": os.environ["PATH"], "TRACEFS": str(d / "tracefs"),
+                 "CYCLES_LIVE": str(d / "live"), "CYCLES_LIVE_EVERY": "1"}
+            p = subprocess.Popen([str(SCRIPT), "cycles", "4"], env=e, text=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                for _ in range(30):
+                    if (d / "live").exists() or p.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                self.assertIsNone(p.poll(), "live file must appear while the window runs")
+                self.assertRegex((d / "live").read_text(), r"^started=\d+ cycles=0 suspend=0 resume=0\n$")
+            finally:
+                out, err = p.communicate(timeout=10)
+            self.assertEqual(p.returncode, 0, err)
+            self.assertIn("cycles=0 suspend=0 resume=0", out)
 
     def test_cycles_without_tracefs_fails(self):
         with tempfile.TemporaryDirectory() as d:

@@ -8,7 +8,8 @@
 # Test/override env: SYSROOT (/), DMESG_CMD, MAPS_PID, PIN_STATE, PIN_CONF,
 # PIN_WAIT (poll limit s; default SETTLE+TIMEOUT), SUSPEND_WAIT (default 60),
 # PON_REASON_PATH (default empty), EGLINFO_FILE, GENPD_SUMMARY_FILE, TRACE_REPORT,
-# TRACEFS (default /sys/kernel/tracing), CYCLES_LIVE (running-count file).
+# TRACEFS (default /sys/kernel/tracing), CYCLES_LIVE (running-count file),
+# CYCLES_LIVE_EVERY (its refresh interval s, default 5).
 set -u
 
 SYSROOT=${SYSROOT:-/}
@@ -265,20 +266,27 @@ g0() {
 }
 
 # Count rpm_status lines on stdin into $s/$r; with $live set, write the running
-# count there every 5 s (soak status shows it) and once at the end.
+# count there every CYCLES_LIVE_EVERY s (default 5; soak status shows it),
+# events or not, and once at the end.
 count_events() {
     # trace-cmd pads the event name ("rpm_status:     3d00000.gpu status=..").
     # A cycle is SUSPENDED then RESUMING; an aborted suspend goes
     # SUSPENDING -> ACTIVE and is neither.
     local sus="rpm_status:[[:space:]]+(name=)?$GPU_DEV_RE status=RPM_SUSPENDED( |$)"
     local res="rpm_status:[[:space:]]+(name=)?$GPU_DEV_RE status=RPM_RESUMING( |$)"
-    local line started last=0
+    local line rc started last=0 every=${CYCLES_LIVE_EVERY:-5}
     started=$(date +%s)
-    while IFS= read -r line; do
-        if [[ $line =~ $sus ]]; then s=$((s + 1))
-        elif [[ $line =~ $res ]]; then r=$((r + 1))
+    while :; do
+        # time out so an idle GPU (no events) still refreshes the live file
+        IFS= read -r -t "$every" line; rc=$?
+        if [ "$rc" -eq 0 ]; then
+            if [[ $line =~ $sus ]]; then s=$((s + 1))
+            elif [[ $line =~ $res ]]; then r=$((r + 1))
+            fi
+        elif [ "$rc" -le 128 ]; then
+            break                       # end of input
         fi
-        if [ -n "$live" ] && [ $((SECONDS - last)) -ge 5 ]; then
+        if [ -n "$live" ] && [ $((SECONDS - last)) -ge "$every" ]; then
             write_live "$started"; last=$SECONDS
         fi
     done
