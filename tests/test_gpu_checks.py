@@ -186,6 +186,23 @@ class GpuChecks(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("cycles=7 suspend=7 resume=7", r.stdout)
 
+    def test_cycles_recording_exits_zero_and_cleans_up(self):
+        # the soak tick drops a window whose helper exits nonzero
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "bin").mkdir()
+            (d / "tmp").mkdir()
+            fake = d / "bin" / "trace-cmd"
+            fake.write_text('#!/bin/sh\n[ "$1" = report ] && cat "%s"\nexit 0\n'
+                            % (FIX / "trace" / "report.txt"))
+            fake.chmod(0o755)
+            e = {"PATH": f"{d / 'bin'}:{os.environ['PATH']}", "TMPDIR": str(d / "tmp")}
+            r = subprocess.run([str(SCRIPT), "cycles", "1"], env=e, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stderr, "")
+            self.assertIn("cycles=7 suspend=7 resume=7", r.stdout)
+            self.assertEqual(list((d / "tmp").iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()

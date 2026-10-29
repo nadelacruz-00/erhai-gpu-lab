@@ -269,7 +269,7 @@ cycles() {
         [ -n "$secs" ] || { echo "usage: $0 cycles <seconds>" >&2; exit 2; }
         command -v trace-cmd >/dev/null || { echo "cycles: trace-cmd not installed (run tablet/setup.sh)" >&2; exit 1; }
         tmp=$(mktemp -d) || exit 1
-        trap 'rm -rf "$tmp"' EXIT
+        trap "rm -rf '$tmp'" EXIT   # $tmp is local: expand it now
         # rpm_status fires on real state changes only; rpm_suspend/rpm_resume
         # fire on every call (two or more per cycle)
         trace-cmd record -o "$tmp/trace.dat" -b 4096 -e rpm:rpm_status \
