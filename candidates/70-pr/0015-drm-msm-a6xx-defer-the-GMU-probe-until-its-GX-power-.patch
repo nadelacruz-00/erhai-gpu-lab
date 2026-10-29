@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 12:49:30 +0800
+Subject: [PATCH] drm/msm/a6xx: defer the GMU probe until its GX power domain
+ is ready
+
+a6xx_gmu_init() treats the "gx" power domain as optional and carries on
+when attaching it fails. When the domain is described but its provider
+has not probed yet, the attach returns -EPROBE_DEFER and the GMU comes
+up without gmu->gxpd for good, so hang recovery can never collapse GX.
+
+On the OnePlus Pad 3 the provider is gxclkctl-kaanapali, built as a
+module (SM_GPUCC_8750=m), while drm/msm is built in and the command
+line has fw_devlink=off, so nothing orders the two. Whether GX attached
+depended on module load timing: with erhai_defconfig the GMU lost the
+race by a few milliseconds:
+
+  3d37000.gmu: GX power domain not available (-EPROBE_DEFER): hang recovery cannot collapse GX
+
+Defer the GMU like the qmp_get() deferral just above, so the GPU binds
+once the domain exists. A GMU without a "gx" domain in its node still
+gets NULL and probes as before.
+
+Tested on a OnePlus Pad 3 (SM8750): <to be filled after the boot test>
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index baf99dc9bcc..21b219fbfae 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -2464,6 +2464,10 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
+ 	 * crash
+ 	 */
+ 	gmu->gxpd = dev_pm_domain_attach_by_name(gmu->dev, "gx");
++	if (PTR_ERR_OR_ZERO(gmu->gxpd) == -EPROBE_DEFER) {
++		ret = -EPROBE_DEFER;
++		goto detach_gxpd;
++	}
+ 	if (adreno_is_a8xx(adreno_gpu) && IS_ERR(gmu->gxpd))
+ 		dev_warn(gmu->dev,
+ 			 "GX power domain not available (%pe): hang recovery cannot collapse GX\n",
