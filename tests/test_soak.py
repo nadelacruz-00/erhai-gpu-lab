@@ -4,6 +4,8 @@
 import contextlib
 import io
 import json
+import time
+import os
 import subprocess
 import tempfile
 import unittest
@@ -386,6 +388,33 @@ class StartStopStatusTest(StateTest):
         with mock.patch.object(lab, "_journal", return_value=None):
             _, out, _ = self.run_cmd("status")
         self.assertIn("cycles: 1000 (>= 1000: yes)", out.splitlines())
+
+    def test_status_ignores_a_stale_live_file(self):
+        # a reboot kills the window before its tick removes the file
+        (self.state / "soak.json").write_text(json.dumps({"start_boot": A, "start_line": 1}))
+        (self.state / "soak-cycles.log").write_text(window(A, 129, secs=600))
+        live = self.state / "soak-live.txt"
+        live.write_text("started=1 cycles=681 suspend=681 resume=681\n")
+        old = time.time() - 121
+        os.utime(live, (old, old))
+        with mock.patch.object(lab, "_journal", return_value=None):
+            _, out, _ = self.run_cmd("status")
+        self.assertIn("cycles: 129 (>= 1000: no)", out.splitlines())
+        self.assertNotIn("running one", out)
+
+    def test_tick_removes_a_stale_live_file_before_the_window(self):
+        self.start_soak()
+        live = self.state / "soak-live.txt"
+        live.write_text("started=1 cycles=681 suspend=681 resume=681\n")
+        seen = []
+        def run(*a, **kw):
+            seen.append(live.exists())
+            return subprocess.CompletedProcess([], 0, "cycles=1 suspend=1 resume=1\n", "")
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab, "helper", return_value=Path("/x/gpu-checks.sh")), \
+             mock.patch.object(lab.subprocess, "run", side_effect=run):
+            self.run_cmd("tick")
+        self.assertEqual(seen, [False])
 
     def test_status_without_live_file_has_no_live_line(self):
         (self.state / "soak.json").write_text(json.dumps({"start_boot": A, "start_line": 1}))

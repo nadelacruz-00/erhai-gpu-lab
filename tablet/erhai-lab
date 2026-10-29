@@ -902,6 +902,7 @@ def cmd_power(args: argparse.Namespace) -> int:
 SOAK_FILE = "soak.json"
 SOAK_CYCLES_LOG = "soak-cycles.log"
 SOAK_LIVE = "soak-live.txt"           # running count of the window in progress
+SOAK_LIVE_STALE_S = 30                # gpu-checks.sh rewrites it every 5 s
 SOAK_TIMER = "erhai-gpu-lab-soak.timer"
 SOAK_WINDOW_S = 600
 SOAK_TARGET_CYCLES = 1000
@@ -1100,6 +1101,7 @@ def soak_tick() -> int:
         return 0
     require_root("soak tick")
     live = STATE_DIR / SOAK_LIVE
+    live.unlink(missing_ok=True)      # left behind by a window a reboot killed
     try:
         res = subprocess.run([str(helper("gpu-checks.sh")), "cycles", str(SOAK_WINDOW_S)],
                              capture_output=True, text=True, errors="replace",
@@ -1118,13 +1120,16 @@ def soak_tick() -> int:
 
 
 def _live_window(path: Path) -> tuple[int, int] | None:
-    """(cycles so far, seconds since the last update) of the running window."""
+    """(cycles so far, seconds since the last update) of the running window;
+    None when there is none or the file is stale (its window died)."""
     try:
         m = _CYCLES_LINE_RE.search(path.read_text())
         age = int(time.time() - path.stat().st_mtime)
     except OSError:
         return None
-    return (int(m.group(1)), max(age, 0)) if m else None
+    if not m or age > SOAK_LIVE_STALE_S:
+        return None
+    return int(m.group(1)), max(age, 0)
 
 
 def soak_status() -> int:
