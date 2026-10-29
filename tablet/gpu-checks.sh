@@ -8,7 +8,8 @@
 # Test/override env: SYSROOT (/), DMESG_CMD, MAPS_PID, PIN_STATE, PIN_CONF,
 # PIN_WAIT (poll limit s; default SETTLE+TIMEOUT), SUSPEND_WAIT (default 60),
 # PON_REASON_PATH (default empty), EGLINFO_FILE, GENPD_SUMMARY_FILE, TRACE_REPORT,
-# TRACEFS (default /sys/kernel/tracing), CYCLES_LIVE (running-count file),
+# TRACEFS (default /sys/kernel/tracing), CYCLES_INSTANCE (default erhai-cycles-<pid>),
+# CYCLES_LIVE (running-count file),
 # CYCLES_LIVE_EVERY (its refresh interval s, default 5).
 set -u
 
@@ -307,9 +308,17 @@ cycles() {
         [ -n "$secs" ] || { echo "usage: $0 cycles <seconds>" >&2; exit 2; }
         tracefs=${TRACEFS:-/sys/kernel/tracing}
         [ -d "$tracefs/instances" ] || { echo "cycles: no tracefs at $tracefs" >&2; exit 1; }
-        # A tracefs instance of our own: its buffer and filter do not touch
-        # the top-level one that trace-cmd and other tools use.
-        inst=$tracefs/instances/erhai-cycles
+        # A tracefs instance per run: its buffer and filter touch neither the
+        # top-level one that trace-cmd uses nor a soak window counting
+        # alongside (trace_pipe takes one reader per instance).
+        local old
+        for old in "$tracefs"/instances/erhai-cycles-*; do
+            [ -d "$old" ] || continue
+            kill -0 "${old##*-}" 2>/dev/null && continue        # its run is alive
+            echo 0 >"$old/events/rpm/rpm_status/enable" 2>/dev/null
+            rmdir "$old" 2>/dev/null
+        done
+        inst=$tracefs/instances/${CYCLES_INSTANCE:-erhai-cycles-$$}
         ev=$inst/events/rpm/rpm_status
         [ -d "$inst" ] || mkdir "$inst" || exit 1
         trap "echo 0 >'$ev/enable' 2>/dev/null; rmdir '$inst' 2>/dev/null" EXIT

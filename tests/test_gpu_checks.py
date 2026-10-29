@@ -188,7 +188,7 @@ class GpuChecks(unittest.TestCase):
         self.assertIn("cycles=7 suspend=7 resume=7", r.stdout)
 
     def fake_tracefs(self, d):
-        ev = d / "tracefs" / "instances" / "erhai-cycles" / "events" / "rpm" / "rpm_status"
+        ev = d / "tracefs" / "instances" / "erhai-cycles-test" / "events" / "rpm" / "rpm_status"
         ev.mkdir(parents=True)
         shutil.copy(FIX / "trace" / "report.txt", ev.parents[2] / "trace_pipe")
         return ev
@@ -197,7 +197,7 @@ class GpuChecks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             ev = self.fake_tracefs(d)
-            e = {"PATH": os.environ["PATH"], "TRACEFS": str(d / "tracefs"),
+            e = {"PATH": os.environ["PATH"], "TRACEFS": str(d / "tracefs"), "CYCLES_INSTANCE": "erhai-cycles-test",
                  "CYCLES_LIVE": str(d / "live")}
             r = subprocess.run([str(SCRIPT), "cycles", "1"], env=e, capture_output=True, text=True)
             # the soak tick drops a window whose helper exits nonzero
@@ -217,7 +217,7 @@ class GpuChecks(unittest.TestCase):
             pipe = ev.parents[2] / "trace_pipe"
             pipe.unlink()
             os.mkfifo(pipe)                 # no writer: cat blocks, no events arrive
-            e = {"PATH": os.environ["PATH"], "TRACEFS": str(d / "tracefs"),
+            e = {"PATH": os.environ["PATH"], "TRACEFS": str(d / "tracefs"), "CYCLES_INSTANCE": "erhai-cycles-test",
                  "CYCLES_LIVE": str(d / "live"), "CYCLES_LIVE_EVERY": "1"}
             p = subprocess.Popen([str(SCRIPT), "cycles", "4"], env=e, text=True,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -232,6 +232,24 @@ class GpuChecks(unittest.TestCase):
                 out, err = p.communicate(timeout=10)
             self.assertEqual(p.returncode, 0, err)
             self.assertIn("cycles=0 suspend=0 resume=0", out)
+
+    def test_cycles_disables_instances_of_dead_runs(self):
+        # a window killed before its EXIT trap leaves its instance tracing
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            self.fake_tracefs(d)
+            stale = d / "tracefs" / "instances" / "erhai-cycles-999999999" / "events" / "rpm" / "rpm_status"
+            stale.mkdir(parents=True)
+            (stale / "enable").write_text("1\n")
+            alive = d / "tracefs" / "instances" / f"erhai-cycles-{os.getpid()}" / "events" / "rpm" / "rpm_status"
+            alive.mkdir(parents=True)
+            (alive / "enable").write_text("1\n")
+            e = {"PATH": os.environ["PATH"], "TRACEFS": str(d / "tracefs"),
+                 "CYCLES_INSTANCE": "erhai-cycles-test"}
+            r = subprocess.run([str(SCRIPT), "cycles", "0"], env=e, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual((stale / "enable").read_text(), "0\n")
+            self.assertEqual((alive / "enable").read_text(), "1\n")   # a running window keeps its own
 
     def test_cycles_without_tracefs_fails(self):
         with tempfile.TemporaryDirectory() as d:
