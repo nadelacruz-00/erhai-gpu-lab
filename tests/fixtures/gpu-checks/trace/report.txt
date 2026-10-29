@@ -1,17 +1,62 @@
-     kworker-12  [001]   10.100000: rpm_suspend: 3d00000.gpu flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   10.200000: rpm_resume: 3d00000.gpu flags-4 cnt-1 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   11.100000: rpm_suspend: 3d00000.gpu flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   11.200000: rpm_resume: 3d00000.gpu flags-4 cnt-1 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   12.100000: rpm_suspend: 3d00000.gpu flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   12.200000: rpm_resume: 3d00000.gpu flags-4 cnt-1 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   13.100000: rpm_suspend: 3d00000.gpu flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   13.200000: rpm_resume: 3d00000.gpu flags-4 cnt-1 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   14.100000: rpm_suspend: 3d00000.gpu flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   14.200000: rpm_resume: 3d00000.gpu flags-4 cnt-1 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   15.100000: rpm_suspend: 3d00000.gpu flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   15.200000: rpm_resume: 3d00000.gpu flags-4 cnt-1 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   16.100000: rpm_suspend: 3d00000.gpu flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-12  [001]   16.200000: rpm_resume: 3d00000.gpu flags-4 cnt-1 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-3   [000]   12.300000: rpm_suspend: ae01000.display-controller flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-3   [000]   12.400000: rpm_resume: ae01000.display-controller flags-4 cnt-1 dep-0 auto-1 p-0 irq-0 child-0
-     kworker-3   [000]   12.500000: rpm_suspend: ae01000.display-controller flags-4 cnt-0 dep-0 auto-1 p-0 irq-0 child-0
+            <idle>-0 [007] d..1.  5263.000000: rpm_suspend:          3d00000.gpu flags-9 cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5263.000100: rpm_suspend:          3d00000.gpu flags-a cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5263.000200: rpm_status:           3d00000.gpu status=RPM_SUSPENDING
+ kworker/u34:3-68805 [006] d..1.  5263.004000: rpm_status:           3d00000.gpu status=RPM_SUSPENDED
+ kworker/u32:1-59581 [003] d..1.  5263.320000: rpm_resume:           3d00000.gpu flags-4 cnt-1  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u32:1-59581 [003] d..1.  5263.320100: rpm_status:           3d00000.gpu status=RPM_RESUMING
+ kworker/u32:1-59581 [003] d..1.  5263.326000: rpm_status:           3d00000.gpu status=RPM_ACTIVE
+ kworker/u32:1-59581 [002] d..1.  5263.330000: rpm_resume:           3d00000.gpu flags-5 cnt-2  dep-0  auto-1 p-0 irq-0 child-0
+            <idle>-0 [007] d..1.  5264.000000: rpm_suspend:          3d00000.gpu flags-9 cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5264.000100: rpm_suspend:          3d00000.gpu flags-a cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5264.000200: rpm_status:           3d00000.gpu status=RPM_SUSPENDING
+ kworker/u34:3-68805 [006] d..1.  5264.004000: rpm_status:           3d00000.gpu status=RPM_SUSPENDED
+ kworker/u32:1-59581 [003] d..1.  5264.320000: rpm_resume:           3d00000.gpu flags-4 cnt-1  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u32:1-59581 [003] d..1.  5264.320100: rpm_status:           3d00000.gpu status=RPM_RESUMING
+ kworker/u32:1-59581 [003] d..1.  5264.326000: rpm_status:           3d00000.gpu status=RPM_ACTIVE
+ kworker/u32:1-59581 [002] d..1.  5264.330000: rpm_resume:           3d00000.gpu flags-5 cnt-2  dep-0  auto-1 p-0 irq-0 child-0
+            <idle>-0 [007] d..1.  5265.000000: rpm_suspend:          3d00000.gpu flags-9 cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5265.000100: rpm_suspend:          3d00000.gpu flags-a cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5265.000200: rpm_status:           3d00000.gpu status=RPM_SUSPENDING
+ kworker/u34:3-68805 [006] d..1.  5265.004000: rpm_status:           3d00000.gpu status=RPM_SUSPENDED
+ kworker/u32:1-59581 [003] d..1.  5265.320000: rpm_resume:           3d00000.gpu flags-4 cnt-1  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u32:1-59581 [003] d..1.  5265.320100: rpm_status:           3d00000.gpu status=RPM_RESUMING
+ kworker/u32:1-59581 [003] d..1.  5265.326000: rpm_status:           3d00000.gpu status=RPM_ACTIVE
+ kworker/u32:1-59581 [002] d..1.  5265.330000: rpm_resume:           3d00000.gpu flags-5 cnt-2  dep-0  auto-1 p-0 irq-0 child-0
+            <idle>-0 [007] d..1.  5266.000000: rpm_suspend:          3d00000.gpu flags-9 cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5266.000100: rpm_suspend:          3d00000.gpu flags-a cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5266.000200: rpm_status:           3d00000.gpu status=RPM_SUSPENDING
+ kworker/u34:3-68805 [006] d..1.  5266.004000: rpm_status:           3d00000.gpu status=RPM_SUSPENDED
+ kworker/u32:1-59581 [003] d..1.  5266.320000: rpm_resume:           3d00000.gpu flags-4 cnt-1  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u32:1-59581 [003] d..1.  5266.320100: rpm_status:           3d00000.gpu status=RPM_RESUMING
+ kworker/u32:1-59581 [003] d..1.  5266.326000: rpm_status:           3d00000.gpu status=RPM_ACTIVE
+ kworker/u32:1-59581 [002] d..1.  5266.330000: rpm_resume:           3d00000.gpu flags-5 cnt-2  dep-0  auto-1 p-0 irq-0 child-0
+            <idle>-0 [007] d..1.  5267.000000: rpm_suspend:          3d00000.gpu flags-9 cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5267.000100: rpm_suspend:          3d00000.gpu flags-a cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5267.000200: rpm_status:           3d00000.gpu status=RPM_SUSPENDING
+ kworker/u34:3-68805 [006] d..1.  5267.004000: rpm_status:           3d00000.gpu status=RPM_SUSPENDED
+ kworker/u32:1-59581 [003] d..1.  5267.320000: rpm_resume:           3d00000.gpu flags-4 cnt-1  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u32:1-59581 [003] d..1.  5267.320100: rpm_status:           3d00000.gpu status=RPM_RESUMING
+ kworker/u32:1-59581 [003] d..1.  5267.326000: rpm_status:           3d00000.gpu status=RPM_ACTIVE
+ kworker/u32:1-59581 [002] d..1.  5267.330000: rpm_resume:           3d00000.gpu flags-5 cnt-2  dep-0  auto-1 p-0 irq-0 child-0
+            <idle>-0 [007] d..1.  5268.000000: rpm_suspend:          3d00000.gpu flags-9 cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5268.000100: rpm_suspend:          3d00000.gpu flags-a cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5268.000200: rpm_status:           3d00000.gpu status=RPM_SUSPENDING
+ kworker/u34:3-68805 [006] d..1.  5268.004000: rpm_status:           3d00000.gpu status=RPM_SUSPENDED
+ kworker/u32:1-59581 [003] d..1.  5268.320000: rpm_resume:           3d00000.gpu flags-4 cnt-1  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u32:1-59581 [003] d..1.  5268.320100: rpm_status:           3d00000.gpu status=RPM_RESUMING
+ kworker/u32:1-59581 [003] d..1.  5268.326000: rpm_status:           3d00000.gpu status=RPM_ACTIVE
+ kworker/u32:1-59581 [002] d..1.  5268.330000: rpm_resume:           3d00000.gpu flags-5 cnt-2  dep-0  auto-1 p-0 irq-0 child-0
+            <idle>-0 [007] d..1.  5269.000000: rpm_suspend:          3d00000.gpu flags-9 cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5269.000100: rpm_suspend:          3d00000.gpu flags-a cnt-0  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5269.000200: rpm_status:           3d00000.gpu status=RPM_SUSPENDING
+ kworker/u34:3-68805 [006] d..1.  5269.004000: rpm_status:           3d00000.gpu status=RPM_SUSPENDED
+ kworker/u32:1-59581 [003] d..1.  5269.320000: rpm_resume:           3d00000.gpu flags-4 cnt-1  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u32:1-59581 [003] d..1.  5269.320100: rpm_status:           3d00000.gpu status=RPM_RESUMING
+ kworker/u32:1-59581 [003] d..1.  5269.326000: rpm_status:           3d00000.gpu status=RPM_ACTIVE
+ kworker/u32:1-59581 [002] d..1.  5269.330000: rpm_resume:           3d00000.gpu flags-5 cnt-2  dep-0  auto-1 p-0 irq-0 child-0
+ kworker/u34:3-68805 [006] d..1.  5270.000000: rpm_status:           3d00000.gpu status=RPM_SUSPENDING
+ kworker/u34:3-68805 [006] d..1.  5270.001000: rpm_status:           3d00000.gpu status=RPM_ACTIVE
+    kworker/u33:0-12 [000] d..1.  5271.000000: rpm_status:           ae01000.display-controller status=RPM_SUSPENDED
+    kworker/u33:0-12 [000] d..1.  5271.100000: rpm_status:           ae01000.display-controller status=RPM_RESUMING
+    kworker/u33:0-12 [000] d..1.  5272.000000: rpm_status:           ae01000.display-controller status=RPM_SUSPENDED
+    kworker/u33:0-12 [000] d..1.  5272.100000: rpm_status:           ae01000.display-controller status=RPM_RESUMING

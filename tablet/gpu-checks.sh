@@ -270,15 +270,19 @@ cycles() {
         command -v trace-cmd >/dev/null || { echo "cycles: trace-cmd not installed (run tablet/setup.sh)" >&2; exit 1; }
         tmp=$(mktemp -d) || exit 1
         trap 'rm -rf "$tmp"' EXIT
-        trace-cmd record -o "$tmp/trace.dat" -b 4096 -e rpm:rpm_suspend -e rpm:rpm_resume \
+        # rpm_status fires on real state changes only; rpm_suspend/rpm_resume
+        # fire on every call (two or more per cycle)
+        trace-cmd record -o "$tmp/trace.dat" -b 4096 -e rpm:rpm_status \
             -f 'name == "3d00000.gpu"' sleep "$secs" >/dev/null || exit 1
         trace-cmd report -i "$tmp/trace.dat" >"$tmp/report.txt" || exit 1
         rep=$tmp/report.txt
     fi
     if [ ! -r "$rep" ]; then echo "cycles: trace report unreadable: $rep" >&2; exit 1; fi
-    # rpm tracepoints print "<dev> flags-.." (accept "name=<dev>" too)
-    s=$(grep -Ec "rpm_suspend: (name=)?$GPU_DEV_RE( |$)" "$rep")
-    r=$(grep -Ec "rpm_resume: (name=)?$GPU_DEV_RE( |$)" "$rep")
+    # trace-cmd pads the event name ("rpm_status:     3d00000.gpu status=..").
+    # A cycle is SUSPENDED then RESUMING; an aborted suspend goes
+    # SUSPENDING -> ACTIVE and is neither.
+    s=$(grep -Ec "rpm_status:[[:space:]]+(name=)?$GPU_DEV_RE status=RPM_SUSPENDED\b" "$rep")
+    r=$(grep -Ec "rpm_status:[[:space:]]+(name=)?$GPU_DEV_RE status=RPM_RESUMING\b" "$rep")
     s=${s:-0}; r=${r:-0}
     echo "cycles=$(( s < r ? s : r )) suspend=$s resume=$r"
 }
