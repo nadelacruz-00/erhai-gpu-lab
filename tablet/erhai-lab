@@ -901,6 +901,7 @@ def cmd_power(args: argparse.Namespace) -> int:
 
 SOAK_FILE = "soak.json"
 SOAK_CYCLES_LOG = "soak-cycles.log"
+SOAK_LIVE = "soak-live.txt"           # running count of the window in progress
 SOAK_TIMER = "erhai-gpu-lab-soak.timer"
 SOAK_WINDOW_S = 600
 SOAK_TARGET_CYCLES = 1000
@@ -1098,8 +1099,13 @@ def soak_tick() -> int:
     if soak is None or _soak_window(soak)[2] is not None:
         return 0
     require_root("soak tick")
-    res = subprocess.run([str(helper("gpu-checks.sh")), "cycles", str(SOAK_WINDOW_S)],
-                         capture_output=True, text=True, errors="replace")
+    live = STATE_DIR / SOAK_LIVE
+    try:
+        res = subprocess.run([str(helper("gpu-checks.sh")), "cycles", str(SOAK_WINDOW_S)],
+                             capture_output=True, text=True, errors="replace",
+                             env={**os.environ, "CYCLES_LIVE": str(live)})
+    finally:
+        live.unlink(missing_ok=True)
     m = _CYCLES_LINE_RE.search(res.stdout)
     if res.returncode != 0 or not m:
         detail = (res.stderr or res.stdout).strip() or f"exit {res.returncode}"
@@ -1109,6 +1115,16 @@ def soak_tick() -> int:
     with open(STATE_DIR / SOAK_CYCLES_LOG, "a") as f:
         f.write(f"boot={this_boot_id()} secs={SOAK_WINDOW_S} cycles={m.group(1)}\n")
     return 0
+
+
+def _live_window(path: Path) -> tuple[int, int] | None:
+    """(cycles so far, seconds since the last update) of the running window."""
+    try:
+        m = _CYCLES_LINE_RE.search(path.read_text())
+        age = int(time.time() - path.stat().st_mtime)
+    except OSError:
+        return None
+    return (int(m.group(1)), max(age, 0)) if m else None
 
 
 def soak_status() -> int:
@@ -1128,6 +1144,9 @@ def soak_status() -> int:
     print(f"hours: {s['hours']:.2f}")
     print(f"cycles: {s['cycles']} (>= {SOAK_TARGET_CYCLES}: "
           f"{'yes' if s['cycles_ok'] else 'no'})")
+    live = _live_window(STATE_DIR / SOAK_LIVE) if stop_line is None else None
+    if live is not None:
+        print(f"live: +{live[0]} cycles in the running window (updated {live[1]} s ago)")
     print(f"boots: {s['boots']}")
     for bid, kind in s["resets"]:
         print(f"reset {bid[:8]} {kind}")

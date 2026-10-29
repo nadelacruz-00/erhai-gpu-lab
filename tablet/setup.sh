@@ -5,7 +5,7 @@
 # are missing and neither root nor passwordless sudo is available.
 set -u
 
-# trace-cmd: rpm cycle counts; mesa-utils/vulkan-tools: renderer check.
+# trace-cmd: trace diagnostics; mesa-utils/vulkan-tools: renderer check.
 # The rest build IGT msm_recovery (tools/igt-recovery), the g1 hang source.
 PKGS=(trace-cmd mesa-utils vulkan-tools
       git meson ninja-build pkg-config flex bison zlib1g-dev

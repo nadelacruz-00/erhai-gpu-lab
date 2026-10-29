@@ -158,6 +158,17 @@ class TickTest(StateTest):
         self.assertEqual((self.state / "soak-cycles.log").read_text(),
                          window(A, 5) + window(B, 412, secs=600))
 
+    def test_tick_points_the_helper_at_the_live_file_and_removes_it(self):
+        self.start_soak()
+        (self.state / "soak-live.txt").write_text("started=1 cycles=3 suspend=3 resume=3\n")
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab, "helper", return_value=Path("/x/gpu-checks.sh")), \
+             self.fake_run("cycles=412 suspend=412 resume=413\n") as run:
+            self.run_cmd("tick")
+        self.assertEqual(run.call_args.kwargs["env"]["CYCLES_LIVE"],
+                         str(self.state / "soak-live.txt"))
+        self.assertFalse((self.state / "soak-live.txt").exists())
+
     def test_failed_window_is_not_appended(self):
         self.start_soak()
         with mock.patch.object(lab, "require_root"), \
@@ -356,6 +367,22 @@ class StartStopStatusTest(StateTest):
         self.assertIn("boots: 2", lines)
         self.assertIn("reset bbbbbbbb cold", lines)
         self.assertIn("wedge bbbbbbbb x hangcheck recover! y", lines)
+
+    def test_status_shows_the_running_window(self):
+        (self.state / "soak.json").write_text(json.dumps({"start_boot": A, "start_line": 1}))
+        (self.state / "soak-cycles.log").write_text(window(A, 129, secs=600))
+        (self.state / "soak-live.txt").write_text("started=1 cycles=57 suspend=58 resume=57\n")
+        with mock.patch.object(lab, "_journal", return_value=None):
+            rc, out, _ = self.run_cmd("status")
+        self.assertEqual(rc, 0)
+        self.assertIn("cycles: 129 (>= 1000: no)", out.splitlines())
+        self.assertRegex(out, r"(?m)^live: \+57 cycles in the running window \(updated \d+ s ago\)$")
+
+    def test_status_without_live_file_has_no_live_line(self):
+        (self.state / "soak.json").write_text(json.dumps({"start_boot": A, "start_line": 1}))
+        with mock.patch.object(lab, "_journal", return_value=None):
+            _, out, _ = self.run_cmd("status")
+        self.assertNotIn("live:", out)
 
     def test_parser_shape(self):
         p = lab.build_parser()

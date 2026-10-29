@@ -186,25 +186,35 @@ class GpuChecks(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("cycles=7 suspend=7 resume=7", r.stdout)
 
-    def test_cycles_recording_exits_zero_and_cleans_up(self):
-        # the soak tick drops a window whose helper exits nonzero
+    def fake_tracefs(self, d):
+        ev = d / "tracefs" / "instances" / "erhai-cycles" / "events" / "rpm" / "rpm_status"
+        ev.mkdir(parents=True)
+        shutil.copy(FIX / "trace" / "report.txt", ev.parents[2] / "trace_pipe")
+        return ev
+
+    def test_cycles_streams_from_own_tracefs_instance(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            (d / "bin").mkdir()
-            (d / "tmp").mkdir()
-            fake = d / "bin" / "trace-cmd"
-            fake.write_text('#!/bin/sh\nls "$TMPDIR" >"%s"\n[ "$1" = report ] && cat "%s"\nexit 0\n'
-                            % (d / "seen", FIX / "trace" / "report.txt"))
-            fake.chmod(0o755)
-            e = {"PATH": f"{d / 'bin'}:{os.environ['PATH']}", "TMPDIR": str(d / "tmp")}
+            ev = self.fake_tracefs(d)
+            e = {"PATH": os.environ["PATH"], "TRACEFS": str(d / "tracefs"),
+                 "CYCLES_LIVE": str(d / "live")}
             r = subprocess.run([str(SCRIPT), "cycles", "1"], env=e, capture_output=True, text=True)
+            # the soak tick drops a window whose helper exits nonzero
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(r.stderr, "")
             self.assertIn("cycles=7 suspend=7 resume=7", r.stdout)
-            self.assertEqual(list((d / "tmp").iterdir()), [])
-            # a distinct name, so a /tmp/tmp.* cleanup cannot remove a live window's trace
-            self.assertRegex((d / "seen").read_text(), r"^erhai-cycles\.\w+$")
+            self.assertEqual((ev / "filter").read_text(), 'name == "3d00000.gpu"\n')
+            self.assertEqual((ev / "enable").read_text(), "0\n")   # disabled on exit
+            self.assertRegex((d / "live").read_text(),
+                             r"^started=\d+ cycles=7 suspend=7 resume=7\n$")
 
+    def test_cycles_without_tracefs_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            e = {"PATH": os.environ["PATH"], "TRACEFS": str(Path(d) / "none")}
+            r = subprocess.run([str(SCRIPT), "cycles", "1"], env=e, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("cycles=", r.stdout)
+        self.assertIn("tracefs", r.stderr)
 
 if __name__ == "__main__":
     unittest.main()

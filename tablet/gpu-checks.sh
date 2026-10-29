@@ -3,11 +3,12 @@
 # GPU ladder checks for the OnePlus Pad 3 (erhai).
 #   gpu-checks.sh g0              boot checks: one "PASS|FAIL|INFO <id> <value>" line each;
 #                                 exit 1 if any FAIL
-#   gpu-checks.sh cycles [secs]   count GPU runtime-PM cycles with trace-cmd
+#   gpu-checks.sh cycles [secs]   count GPU runtime-PM cycles from a tracefs instance
 #
 # Test/override env: SYSROOT (/), DMESG_CMD, MAPS_PID, PIN_STATE, PIN_CONF,
 # PIN_WAIT (poll limit s; default SETTLE+TIMEOUT), SUSPEND_WAIT (default 60),
-# PON_REASON_PATH (default empty), EGLINFO_FILE, GENPD_SUMMARY_FILE, TRACE_REPORT.
+# PON_REASON_PATH (default empty), EGLINFO_FILE, GENPD_SUMMARY_FILE, TRACE_REPORT,
+# TRACEFS (default /sys/kernel/tracing), CYCLES_LIVE (running-count file).
 set -u
 
 SYSROOT=${SYSROOT:-/}
@@ -263,27 +264,54 @@ g0() {
     exit "$failed"
 }
 
-cycles() {
-    local secs=${1:-} rep=${TRACE_REPORT:-} tmp s r
-    if [ -z "$rep" ]; then
-        [ -n "$secs" ] || { echo "usage: $0 cycles <seconds>" >&2; exit 2; }
-        command -v trace-cmd >/dev/null || { echo "cycles: trace-cmd not installed (run tablet/setup.sh)" >&2; exit 1; }
-        tmp=$(mktemp -d -t erhai-cycles.XXXXXX) || exit 1
-        trap "rm -rf '$tmp'" EXIT   # $tmp is local: expand it now
-        # rpm_status fires on real state changes only; rpm_suspend/rpm_resume
-        # fire on every call (two or more per cycle)
-        trace-cmd record -o "$tmp/trace.dat" -b 4096 -e rpm:rpm_status \
-            -f 'name == "3d00000.gpu"' sleep "$secs" >/dev/null || exit 1
-        trace-cmd report -i "$tmp/trace.dat" >"$tmp/report.txt" || exit 1
-        rep=$tmp/report.txt
-    fi
-    if [ ! -r "$rep" ]; then echo "cycles: trace report unreadable: $rep" >&2; exit 1; fi
+# Count rpm_status lines on stdin into $s/$r; with $live set, write the running
+# count there every 5 s (soak status shows it) and once at the end.
+count_events() {
     # trace-cmd pads the event name ("rpm_status:     3d00000.gpu status=..").
     # A cycle is SUSPENDED then RESUMING; an aborted suspend goes
     # SUSPENDING -> ACTIVE and is neither.
-    s=$(grep -Ec "rpm_status:[[:space:]]+(name=)?$GPU_DEV_RE status=RPM_SUSPENDED\b" "$rep")
-    r=$(grep -Ec "rpm_status:[[:space:]]+(name=)?$GPU_DEV_RE status=RPM_RESUMING\b" "$rep")
-    s=${s:-0}; r=${r:-0}
+    local sus="rpm_status:[[:space:]]+(name=)?$GPU_DEV_RE status=RPM_SUSPENDED( |$)"
+    local res="rpm_status:[[:space:]]+(name=)?$GPU_DEV_RE status=RPM_RESUMING( |$)"
+    local line started last=0
+    started=$(date +%s)
+    while IFS= read -r line; do
+        if [[ $line =~ $sus ]]; then s=$((s + 1))
+        elif [[ $line =~ $res ]]; then r=$((r + 1))
+        fi
+        if [ -n "$live" ] && [ $((SECONDS - last)) -ge 5 ]; then
+            write_live "$started"; last=$SECONDS
+        fi
+    done
+    [ -z "$live" ] || write_live "$started"
+}
+
+write_live() {
+    printf 'started=%s cycles=%d suspend=%d resume=%d\n' "$1" $((s < r ? s : r)) "$s" "$r" \
+        >"$live.tmp" && mv -f "$live.tmp" "$live"
+}
+
+cycles() {
+    local secs=${1:-} rep=${TRACE_REPORT:-} live=${CYCLES_LIVE:-} tracefs inst ev s=0 r=0
+    if [ -n "$rep" ]; then
+        if [ ! -r "$rep" ]; then echo "cycles: trace report unreadable: $rep" >&2; exit 1; fi
+        count_events <"$rep"
+    else
+        [ -n "$secs" ] || { echo "usage: $0 cycles <seconds>" >&2; exit 2; }
+        tracefs=${TRACEFS:-/sys/kernel/tracing}
+        [ -d "$tracefs/instances" ] || { echo "cycles: no tracefs at $tracefs" >&2; exit 1; }
+        # A tracefs instance of our own: its buffer and filter do not touch
+        # the top-level one that trace-cmd and other tools use.
+        inst=$tracefs/instances/erhai-cycles
+        ev=$inst/events/rpm/rpm_status
+        [ -d "$inst" ] || mkdir "$inst" || exit 1
+        trap "echo 0 >'$ev/enable' 2>/dev/null; rmdir '$inst' 2>/dev/null" EXIT
+        # rpm_status fires on real state changes only; rpm_suspend/rpm_resume
+        # fire on every call (two or more per cycle)
+        echo "name == \"$GPU_DEV\"" >"$ev/filter" && : >"$inst/trace" && echo 1 >"$ev/enable" ||
+            { echo "cycles: cannot set up $inst" >&2; exit 1; }
+        # sleep, not timeout: its clock stops in suspend, so a window is awake time
+        count_events < <(cat "$inst/trace_pipe" & p=$!; sleep "$secs"; kill "$p" 2>/dev/null)
+    fi
     echo "cycles=$(( s < r ? s : r )) suspend=$s resume=$r"
 }
 
