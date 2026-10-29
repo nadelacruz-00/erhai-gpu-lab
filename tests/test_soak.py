@@ -364,7 +364,7 @@ class StartStopStatusTest(StateTest):
         self.assertEqual(calls, [("-k", "-b", A), ("-k", "-b", B)])
         lines = out.splitlines()
         self.assertIn("soak: running", lines)
-        self.assertIn("hours: 1.67", lines)
+        self.assertIn("hours: 1.67 of 8 (>= 8: no)", lines)
         self.assertIn("cycles: 1100 (>= 1000: yes)", lines)
         self.assertIn("boots: 2", lines)
         self.assertIn("reset bbbbbbbb cold", lines)
@@ -422,6 +422,50 @@ class StartStopStatusTest(StateTest):
             _, out, _ = self.run_cmd("status")
         self.assertNotIn("running one", out)
 
+    def test_start_records_the_hours_target(self):
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0)):
+            rc, out, _ = self.run_cmd("start", "--hours", "48")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads((self.state / "soak.json").read_text())["target_hours"], 48)
+        self.assertIn("goal 48 h", out)
+
+    def test_status_shows_progress_to_the_hours_target(self):
+        (self.state / "soak.json").write_text(
+            json.dumps({"start_boot": A, "start_line": 1, "target_hours": 48}))
+        (self.state / "soak-cycles.log").write_text(window(A, 10, secs=36000))
+        with mock.patch.object(lab, "_journal", return_value=None):
+            _, out, _ = self.run_cmd("status")
+        self.assertIn("hours: 10.00 of 48 (>= 48: no)", out.splitlines())
+
+    def test_start_archives_the_previous_soak(self):
+        old = {"start_boot": A, "start_line": 0, "stop_line": 1}
+        (self.state / "soak.json").write_text(json.dumps(old))
+        (self.state / "soak-cycles.log").write_text(window(A, 5))
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0)):
+            rc, out, _ = self.run_cmd("start")
+        self.assertEqual(rc, 0)
+        arch = self.state / "soak-archive" / A[:8]
+        self.assertEqual(json.loads((arch / "soak.json").read_text()), old)
+        self.assertEqual((arch / "soak-cycles.log").read_text(), window(A, 5))
+        self.assertEqual((self.state / "soak-cycles.log").read_text(), "")
+        self.assertIn(str(arch), out)
+
+    def test_start_never_overwrites_an_archive(self):
+        (self.state / "soak-archive" / A[:8]).mkdir(parents=True)
+        (self.state / "soak-archive" / A[:8] / "soak.json").write_text("first\n")
+        (self.state / "soak.json").write_text(
+            json.dumps({"start_boot": A, "start_line": 0, "stop_line": 1}))
+        with mock.patch.object(lab, "require_root"), \
+             mock.patch.object(lab.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0)):
+            self.run_cmd("start")
+        self.assertEqual((self.state / "soak-archive" / A[:8] / "soak.json").read_text(), "first\n")
+        self.assertTrue((self.state / "soak-archive" / f"{A[:8]}-2" / "soak.json").exists())
+
     def test_parser_shape(self):
         p = lab.build_parser()
         for sub in ("start", "stop", "tick", "status"):
@@ -434,7 +478,7 @@ class UnitFilesTest(unittest.TestCase):
     def test_timer_and_service_files(self):
         timer = (TABLET / "erhai-gpu-lab-soak.timer").read_text().splitlines()
         service = (TABLET / "erhai-gpu-lab-soak.service").read_text().splitlines()
-        for line in ("OnBootSec=5min", "OnUnitActiveSec=11min",
+        for line in ("OnBootSec=5min", "OnUnitActiveSec=11min", "OnUnitInactiveSec=10s",
                      "Unit=erhai-gpu-lab-soak.service"):
             self.assertIn(line, timer)
         for line in ("Type=oneshot",

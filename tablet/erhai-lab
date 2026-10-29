@@ -906,6 +906,8 @@ SOAK_LIVE_STALE_S = 30                # gpu-checks.sh rewrites it every 5 s
 SOAK_TIMER = "erhai-gpu-lab-soak.timer"
 SOAK_WINDOW_S = 600
 SOAK_TARGET_CYCLES = 1000
+SOAK_TARGET_HOURS = 8                 # default; soak start --hours sets another
+SOAK_ARCHIVE = "soak-archive"
 WEDGE_RE = re.compile(r"GMU OOB|HFI .*timed out|hangcheck recover!|a8xx_recover|"
                       r"cx gdsc didn't collapse")
 _CYCLES_LINE_RE = re.compile(r"\bcycles=(\d+)")
@@ -1037,15 +1039,38 @@ def soak_kernel_logs(soak: dict, ids: list[str]) -> dict[str, str]:
     return logs
 
 
-def soak_start() -> int:
+def _archive_soak(old: dict) -> Path:
+    """Copy a finished soak's soak.json and cycles log to soak-archive/<boot8>[-n]/."""
+    base = STATE_DIR / SOAK_ARCHIVE
+    name = (old.get("start_boot") or "unknown")[:8]
+    dest, n = base / name, 1
+    while dest.exists():
+        n += 1
+        dest = base / f"{name}-{n}"
+    try:
+        dest.mkdir(parents=True)
+        _write_json(dest / SOAK_FILE, old)
+        log = STATE_DIR / SOAK_CYCLES_LOG
+        if log.exists():
+            shutil.copyfile(log, dest / SOAK_CYCLES_LOG)
+    except OSError as e:
+        raise LabError(f"cannot archive the previous soak to {dest}: {e}") from e
+    return dest
+
+
+def soak_start(target_hours: int = SOAK_TARGET_HOURS) -> int:
     require_root("soak start")
     state_file = STATE_DIR / SOAK_FILE
     old = _read_soak(STATE_DIR)
     if old is not None and _soak_window(old)[2] is None:
         raise LabError("soak already running; soak stop first")
+    # the previous soak's results are kept before anything is overwritten
+    archived = _archive_soak(old) if old is not None else None
     start = {"start_boot": this_boot_id(),
              "start_line": len(_boots_records(STATE_DIR)),
              "start_uptime": this_uptime()}
+    if target_hours != SOAK_TARGET_HOURS:
+        start["target_hours"] = target_hours
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         _write_json(state_file, start)
@@ -1066,8 +1091,10 @@ def soak_start() -> int:
     except OSError as e:
         raise LabError(f"cannot empty {STATE_DIR / SOAK_CYCLES_LOG}: {e}; "
                        "the soak timer is already enabled") from e
-    print(f"soak started on boot {start['start_boot'][:8]}; one {SOAK_WINDOW_S} s "
-          f"window about every 11 minutes, goal {SOAK_TARGET_CYCLES} cycles "
+    if archived is not None:
+        print(f"previous soak kept in {archived}")
+    print(f"soak started on boot {start['start_boot'][:8]}; {SOAK_WINDOW_S} s windows "
+          f"back to back, goal {target_hours} h and {SOAK_TARGET_CYCLES} cycles "
           "(erhai-gpu-lab soak status)")
     return 0
 
@@ -1119,6 +1146,11 @@ def soak_tick() -> int:
     return 0
 
 
+def _hours_line(hours: float, soak: dict) -> str:
+    target = soak.get("target_hours", SOAK_TARGET_HOURS)
+    return f"hours: {hours:.2f} of {target} (>= {target}: {'yes' if hours >= target else 'no'})"
+
+
 def _live_window(path: Path) -> tuple[int, int] | None:
     """(cycles so far, seconds since the last update) of the running window;
     None when there is none or the file is stale (its window died)."""
@@ -1146,7 +1178,7 @@ def soak_status() -> int:
         cycles_log = ""
     s = soak_summary(cycles_log, boots, start_line, kernel_logs, start_boot, stop_line)
     print("soak: running" if stop_line is None else "soak: stopped")
-    print(f"hours: {s['hours']:.2f}")
+    print(_hours_line(s["hours"], soak))
     live = _live_window(STATE_DIR / SOAK_LIVE) if stop_line is None else None
     total = s["cycles"] + (live[0] if live else 0)
     print(f"cycles: {total} (>= {SOAK_TARGET_CYCLES}: "
@@ -1163,8 +1195,9 @@ def soak_status() -> int:
 
 
 def cmd_soak(args: argparse.Namespace) -> int:
-    return {"start": soak_start, "stop": soak_stop, "tick": soak_tick,
-            "status": soak_status}[args.soak_cmd]()
+    if args.soak_cmd == "start":
+        return soak_start(args.hours)
+    return {"stop": soak_stop, "tick": soak_tick, "status": soak_status}[args.soak_cmd]()
 
 
 # ---------------------------------------------------------------- report ---
@@ -1221,7 +1254,7 @@ def _report_soak(state: Path, boots: list[dict[str, str]],
         cycles_log = ""
     start_line, start_boot, stop_line = _soak_window(soak)
     s = soak_summary(cycles_log, boots, start_line, kernel_logs or {}, start_boot, stop_line)
-    out = ["## Soak", "", "```", f"hours: {s['hours']:.2f}",
+    out = ["## Soak", "", "```", _hours_line(s["hours"], soak),
            f"cycles: {s['cycles']} (>= {SOAK_TARGET_CYCLES}: {'yes' if s['cycles_ok'] else 'no'})",
            f"boots: {s['boots']}"]
     out += [f"reset {bid[:8]} {kind}" for bid, kind in s["resets"]]
@@ -1349,7 +1382,9 @@ def build_parser() -> argparse.ArgumentParser:
     w.set_defaults(func=cmd_power)
     k = sub.add_parser("soak", help="g2 runtime-PM cycle soak across reboots")
     ksub = k.add_subparsers(dest="soak_cmd", required=True)
-    ksub.add_parser("start", help="begin a soak and enable its timer (root)")
+    kstart = ksub.add_parser("start", help="begin a soak and enable its timer (root)")
+    kstart.add_argument("--hours", type=int, default=SOAK_TARGET_HOURS,
+                        help=f"awake hours the soak must reach (default {SOAK_TARGET_HOURS})")
     ksub.add_parser("stop", help="disable the soak timer, keep the results (root)")
     ksub.add_parser("tick", help="run one cycle window (root, soak service)")
     ksub.add_parser("status", help="hours, cycles, boots, resets and wedge lines")

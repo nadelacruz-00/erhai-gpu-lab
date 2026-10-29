@@ -1,8 +1,10 @@
 [Unit]
-Description=erhai GPU lab: g2 soak, one 10-minute cycle window every 11 minutes
+Description=erhai GPU lab: g2 soak, 10-minute cycle windows back to back
 
 [Timer]
 OnBootSec=5min
+# the next window starts 10 s after one ends; the 11 min one is a backstop
+OnUnitInactiveSec=10s
 OnUnitActiveSec=11min
 Unit=erhai-gpu-lab-soak.service
 

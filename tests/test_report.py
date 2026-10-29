@@ -141,7 +141,7 @@ class ReportSoakTest(unittest.TestCase):
     def test_report_soak_summary_with_wedge_lines(self):
         logs = {B: "quiet\nmsm_dpu: GMU OOB timed out\n"}
         out = lab.render_report(self.state, logs)
-        self.assertIn("hours: 2.00", out)
+        self.assertIn("hours: 2.00 of 8 (>= 8: no)", out)
         self.assertIn("cycles: 1100 (>= 1000: yes)", out)
         self.assertIn("boots: 2", out)
         self.assertIn("reset bbbbbbbb warm", out)
