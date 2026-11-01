@@ -6,20 +6,28 @@ Subject: [PATCH] drm/msm/a8xx: add a memory-only GPU crash state
 a8xx had no gpu_state_get callback, so no devcoredump was ever
 produced when the GPU hung or faulted.
 
-Add a8xx_gpu_state_get(), a memory-only snapshot: the ring buffers
-(rptr is read from the hw_apriv shadow, not from a register), the GMU
-log/HFI/debug buffers and the HFI queue history. No register is read,
-because the GMU may be wedged and GX powered off when this runs from
-the recover worker or the SMMU fault path.
+Add a8xx_gpu_state_get(), a memory-only snapshot: the generic Adreno
+state from adreno_gpu_state_get() (ring buffer contents and fences,
+with rptr read from the hw_apriv shadow rather than a register), the
+GMU log/HFI/debug buffers and the HFI queue history. No register is
+read, because the GMU may be wedged and GX powered off when this runs
+from the recover worker or the SMMU fault path. As a result a8xx
+dumps always report "gpu-initialized: 0", as a6xx/a7xx dumps do when
+GX is off.
 
-The GMU part is shared with a6xx/a7xx through a6xx_gpu_state_get_gmu(),
-a pure move of the existing block out of a6xx_gpu_state_get() that only
-gains a gmu_regs flag gating a6xx_get_gmu_registers(). a6xx/a7xx pass
-true, so their output is unchanged. Reviewed with git diff
---color-moved=dimmed-zebra: the only new logic is
-"if (gmu_regs)" and the helper signature and call.
+The shared part moves out of a6xx_gpu_state_get() into
+a6xx_gpu_state_get_gmu(), which also runs adreno_gpu_state_get().
+It is a pure move except for a new gmu_regs parameter that gates
+a6xx_get_gmu_registers(); a6xx/a7xx pass true, so their output is
+unchanged. Reviewed with git diff --color-moved=dimmed-zebra: apart
+from the moved lines, the new code is the helper's signature, the
+"if (gmu_regs)" check, the locals the helper needs, and the call.
 
-a6xx/a7xx: build + pure-move review only, Tested-by welcome.
+Tested on an Adreno 830: IGT msm_recovery gpu-fault (6 of 6 runs) and
+natural GPU hangs produce dumps with the ringbuffer, gmu-log, gmu-hfi
+and queue-history sections; capture takes 1.1 to 4.0 ms.
+
+a6xx/a7xx: build and pure-move review only, Tested-by welcome.
 
 Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
 ---

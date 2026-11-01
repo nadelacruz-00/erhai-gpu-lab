@@ -5,23 +5,28 @@ Subject: [PATCH] drm/msm: free the crash state asynchronously
 
 msm_gpu_crashstate_capture() sets gpu->crashstate and calls
 dev_coredumpm() while the caller (recover_worker() or
-msm_gpu_fault_crashstate_capture()) holds gpu->lock.  When devcoredump
-is disabled (/sys/class/devcoredump/disabled, a write-once knob), a
-devcd already exists for the device, or allocation fails,
-dev_coredumpm_timeout() invokes the free callback synchronously.
+msm_gpu_fault_crashstate_capture()) holds gpu->lock. When devcoredump
+is disabled (/sys/class/devcoredump/disabled, a write-once knob) or
+its allocation fails, dev_coredumpm_timeout() calls the free callback
+synchronously.
 
 msm_gpu_devcoredump_free() then calls msm_gpu_crashstate_put(), which
-does mutex_lock(&gpu->lock) and so recursively locks a non-recursive
-mutex.  On systems with devcoredump disabled, every GPU recovery that
-captures a crash state self-deadlocks.
+does mutex_lock(&gpu->lock) and so recursively takes a mutex the
+caller already holds. On systems with devcoredump disabled, every GPU
+recovery that captures a crash state deadlocks.
 
-Defer the put to a work item instead.  This is safe because the
-devcoredump read path, msm_gpu_devcoredump_read(), takes and drops its
-own crash state reference, and the deferred work takes gpu->lock
-normally once the holder has released it.  gpu->crashstate stays set
-until the worker runs, which only means a capture in that window is
-skipped.  msm_gpu_cleanup() flushes any queued free before teardown.
+Defer the put to a work item on system_dfl_wq instead. This is safe
+because msm_gpu_devcoredump_read() takes and drops its own crash
+state reference, and the work takes gpu->lock normally once the
+holder has released it. gpu->crashstate stays set until the work
+runs, which only means a capture in that window is skipped.
+msm_gpu_cleanup() flushes an already queued free before teardown.
 
+Tested on an Adreno 830 with /sys/class/devcoredump/disabled set to 1:
+IGT msm_recovery gpu-fault recovers and the GPU resumes.
+
+Fixes: c0fec7f562ec ("drm/msm/gpu: Capture the GPU state on a GPU hang")
+Cc: stable@vger.kernel.org
 Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
 ---
  drivers/gpu/drm/msm/msm_gpu.c | 21 ++++++++++++++++++++-
@@ -29,7 +34,7 @@ Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
  2 files changed, 26 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
-index caa86279f56..6e326281d12 100644
+index caa86279f56..fded78fdbf8 100644
 --- a/drivers/gpu/drm/msm/msm_gpu.c
 +++ b/drivers/gpu/drm/msm/msm_gpu.c
 @@ -175,6 +175,14 @@ int msm_gpu_hw_init(struct msm_gpu *gpu)
@@ -58,7 +63,7 @@ index caa86279f56..6e326281d12 100644
 +	 * msm_gpu_crashstate_capture() holds gpu->lock, which
 +	 * msm_gpu_crashstate_put() also takes.  Defer the put to a worker.
 +	 */
-+	schedule_work(&gpu->crashstate_free_work);
++	queue_work(system_dfl_wq, &gpu->crashstate_free_work);
  }
  
  static void msm_gpu_crashstate_get_bo(struct msm_gpu_state *state,
@@ -82,7 +87,7 @@ index caa86279f56..6e326281d12 100644
  		msm_ringbuffer_destroy(gpu->rb[i]);
  		gpu->rb[i] = NULL;
 diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
-index b2c85aa5561..68a89e4e819 100644
+index 5cf220f757d..db9e11e7f51 100644
 --- a/drivers/gpu/drm/msm/msm_gpu.h
 +++ b/drivers/gpu/drm/msm/msm_gpu.h
 @@ -258,6 +258,12 @@ struct msm_gpu {
@@ -96,5 +101,5 @@ index b2c85aa5561..68a89e4e819 100644
 +	struct work_struct crashstate_free_work;
 +
  	/**
- 	 * @recovery_in_progress: set by recover_worker() under @lock, so that
- 	 * fault capture and GMU waits don't wait on a fault devcoredump that
+ 	 * @recovery_in_progress: true while recover_worker() holds @lock, so
+ 	 * that fault capture and GMU waits don't wait on a fault devcoredump

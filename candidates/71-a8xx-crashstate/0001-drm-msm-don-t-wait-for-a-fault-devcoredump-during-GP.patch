@@ -10,35 +10,50 @@ msm_gpu_fault_crashstate_capture() on mutex_lock(&gpu->lock) to take
 the devcoredump.
 
 If recover_worker() is already running, it holds gpu->lock and, from
-the runtime suspend in a8xx_recover(), may time out in
-a6xx_hfi_wait_for_msg_interrupt() or a6xx_gmu_set_oob(). Both loops
+the runtime suspend in a6xx_recover() or a8xx_recover(), may time out
+in a6xx_hfi_wait_for_msg_interrupt() or a6xx_gmu_set_oob(). Both loops
 then fall into an unbounded wait_for_completion() on
-fault_coredump_done, which has just been re-initialised and which only
+fault_coredump_done, which has just been reinitialized and which only
 the fault handler can complete. The fault handler is waiting for
 gpu->lock, which recovery will not release until the wait returns, so
 neither side makes progress.
 
 A fault dump that needs gpu->lock can never complete while recovery
 holds it, so waiting for it is wrong. Add a recovery_in_progress flag
-to struct msm_gpu, set by recover_worker() under gpu->lock, and use it
-in two places: the fault handler no longer starts a devcoredump
-capture while recovery is running, and both GMU wait loops stop
-waiting for the completion and fall through to their normal timeout
-handling instead.
+to struct msm_gpu, set by recover_worker() under gpu->lock, and check
+it in two places:
 
-On an OnePlus Pad 3 (Adreno 830) recoveries that saw a CP page fault
+ - the fault handler doesn't start a devcoredump capture while
+   recovery is running, so a fault that arrives during recovery no
+   longer reinitializes the completion;
+
+ - both GMU wait loops stop waiting for the completion while recovery
+   is running and fall through to their normal timeout handling. This
+   covers a fault handler that had already reinitialized the
+   completion when recovery took gpu->lock.
+
+GMU waiters that don't hold gpu->lock, such as the devfreq frequency
+change path, also skip the completion wait while recovery is running
+and report their timeout right away; recovery is resetting the GMU
+at that point anyway.
+
+On a OnePlus Pad 3 (Adreno 830), recoveries that saw a CP page fault
 within 2 s of "hangcheck recover!" were stuck 3 of 3 times, while
-12 of 12 recoveries without such a fault completed.
+12 of 12 recoveries without such a fault completed. With this patch,
+three natural recoveries that took a CP page fault during recovery
+all completed.
 
-Link: https://www.mail-archive.com/freedreno@lists.freedesktop.org/msg39108.html
+Fixes: 50a0b122cfc8 ("drm/msm: Wait for MMU devcoredump when waiting for GMU")
+Cc: stable@vger.kernel.org
+Link: https://lore.kernel.org/all/CACu1E7EApr6Ne3XxFv4cUa2JuwNW2kfo1c5wSsAUN78iWyQ2sg@mail.gmail.com/
 Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
 ---
  drivers/gpu/drm/msm/adreno/a6xx_gmu.c   | 7 +++++--
  drivers/gpu/drm/msm/adreno/a6xx_hfi.c   | 7 +++++--
  drivers/gpu/drm/msm/adreno/adreno_gpu.c | 3 ++-
  drivers/gpu/drm/msm/msm_gpu.c           | 2 ++
- drivers/gpu/drm/msm/msm_gpu.h           | 7 +++++++
- 5 files changed, 21 insertions(+), 5 deletions(-)
+ drivers/gpu/drm/msm/msm_gpu.h           | 9 +++++++++
+ 5 files changed, 23 insertions(+), 5 deletions(-)
 
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
 index f9ffe6c66c3..3f1e036e2dd 100644
@@ -119,17 +134,19 @@ index 0c2c3563625..caa86279f56 100644
  
  	msm_gpu_retire(gpu);
 diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
-index d27d54bdb7a..b2c85aa5561 100644
+index d27d54bdb7a..5cf220f757d 100644
 --- a/drivers/gpu/drm/msm/msm_gpu.h
 +++ b/drivers/gpu/drm/msm/msm_gpu.h
-@@ -258,6 +258,13 @@ struct msm_gpu {
+@@ -258,6 +258,15 @@ struct msm_gpu {
  
  	struct msm_gpu_state *crashstate;
  
 +	/**
-+	 * @recovery_in_progress: set by recover_worker() under @lock, so that
-+	 * fault capture and GMU waits don't wait on a fault devcoredump that
-+	 * can't complete while recovery holds @lock.
++	 * @recovery_in_progress: true while recover_worker() holds @lock, so
++	 * that fault capture and GMU waits don't wait on a fault devcoredump
++	 * that can't complete while recovery holds @lock.  Written with
++	 * WRITE_ONCE() under @lock; readers (the fault handler, GMU wait
++	 * loops) don't hold @lock and use READ_ONCE().
 +	 */
 +	bool recovery_in_progress;
 +

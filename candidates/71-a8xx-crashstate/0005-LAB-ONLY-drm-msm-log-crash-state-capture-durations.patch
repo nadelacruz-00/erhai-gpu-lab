@@ -11,10 +11,10 @@ Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
  1 file changed, 8 insertions(+)
 
 diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
-index 79a67e9490e..826f7865d3f 100644
+index 428dc966682..2b6e3ef19eb 100644
 --- a/drivers/gpu/drm/msm/msm_gpu.c
 +++ b/drivers/gpu/drm/msm/msm_gpu.c
-@@ -487,6 +487,7 @@ static void recover_worker(struct kthread_work *work)
+@@ -494,6 +494,7 @@ static void recover_worker(struct kthread_work *work)
  	char *comm = NULL, *cmd = NULL;
  	unsigned int noreclaim_flag;
  	struct task_struct *task;
@@ -22,7 +22,7 @@ index 79a67e9490e..826f7865d3f 100644
  	int i;
  
  	mutex_lock(&gpu->lock);
-@@ -544,7 +545,10 @@ static void recover_worker(struct kthread_work *work)
+@@ -551,7 +552,10 @@ static void recover_worker(struct kthread_work *work)
  
  	/* Record the crash state */
  	pm_runtime_get_sync(&gpu->pdev->dev);
@@ -33,7 +33,7 @@ index 79a67e9490e..826f7865d3f 100644
  
  	memalloc_noreclaim_restore(noreclaim_flag);
  
-@@ -614,6 +618,7 @@ void msm_gpu_fault_crashstate_capture(struct msm_gpu *gpu, struct msm_gpu_fault_
+@@ -621,6 +625,7 @@ void msm_gpu_fault_crashstate_capture(struct msm_gpu *gpu, struct msm_gpu_fault_
  	struct msm_ringbuffer *cur_ring = gpu->funcs->active_ring(gpu);
  	char *comm = NULL, *cmd = NULL;
  	unsigned int noreclaim_flag;
@@ -41,7 +41,7 @@ index 79a67e9490e..826f7865d3f 100644
  
  	mutex_lock(&gpu->lock);
  
-@@ -635,7 +640,10 @@ void msm_gpu_fault_crashstate_capture(struct msm_gpu *gpu, struct msm_gpu_fault_
+@@ -642,7 +647,10 @@ void msm_gpu_fault_crashstate_capture(struct msm_gpu *gpu, struct msm_gpu_fault_
  
  	/* Record the crash state */
  	pm_runtime_get_sync(&gpu->pdev->dev);
