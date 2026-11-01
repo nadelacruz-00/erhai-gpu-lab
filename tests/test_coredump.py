@@ -3,6 +3,7 @@
 
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -90,7 +91,7 @@ class Coredump(unittest.TestCase):
         bindir.mkdir()
         fake = bindir / "cat"
         fake.write_text("#!/bin/bash\n/bin/cat \"$@\" && rm -rf %s\n"
-                        % (self.root / "devcd1"))
+                        % shlex.quote(str(self.root / "devcd1")))
         fake.chmod(0o755)
         r = self.run_script("devcd1",
                             PATH="%s:%s" % (bindir, os.environ["PATH"]))
