@@ -83,6 +83,23 @@ class Coredump(unittest.TestCase):
         self.assertIn("vanished during copy (consumed elsewhere)", r.stderr)
         self.assertNotIn("could not free", r.stderr)
 
+    def test_devcd_vanishing_before_free_is_quiet(self):
+        # IGT frees the dump between our copy and our free write: the
+        # redirect to the gone data file must not leak a bash error.
+        bindir = self.tmp / "bin"
+        bindir.mkdir()
+        fake = bindir / "cat"
+        fake.write_text("#!/bin/bash\n/bin/cat \"$@\" && rm -rf %s\n"
+                        % (self.root / "devcd1"))
+        fake.chmod(0o755)
+        r = self.run_script("devcd1",
+                            PATH="%s:%s" % (bindir, os.environ["PATH"]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.bins()), 1)
+        lines = r.stderr.strip().splitlines()
+        self.assertEqual(len(lines), 1, r.stderr)
+        self.assertRegex(lines[0], r"^erhai-gpu-coredump: saved ")
+
     def test_rotation_keeps_newest_20(self):
         for i in range(1, 21):
             p = self.store / f"old-{i}.bin"

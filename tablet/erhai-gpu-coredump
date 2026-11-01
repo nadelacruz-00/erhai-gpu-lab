@@ -70,7 +70,8 @@ fi
 
 # Always free the dump, so the kernel can take the next one. If it is already
 # gone, another reader freed it: not an error.
-if ! echo 1 > "$dev/data" 2>/dev/null; then
+# The group's 2>/dev/null also covers the redirect's own open error.
+if ! { echo 1 > "$dev/data"; } 2>/dev/null; then
 	[[ -e $dev/data ]] && log "could not free $name"
 fi
 

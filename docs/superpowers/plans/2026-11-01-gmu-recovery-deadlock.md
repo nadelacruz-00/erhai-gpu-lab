@@ -368,6 +368,23 @@ Expected: `recover=1`, the GPU active again, no hang. The dump check reports `du
 
 ---
 
+### Task 8b: Serialize devcoredump rendering (found in Task 8 Step 2)
+
+Evidence (g1 run 5, 2026-11-01): `WARNING: mm/slub.c:6733 free_large_kmalloc` ← `kvfree` ← `adreno_show_object` ← `a6xx_show` ← `msm_gpu_devcoredump_read` ("Not a kmalloc allocation", 16× in one boot, one burst per IGT gpu-fault run), plus a saved `.bin` truncated at a page boundary mid gmu-log. `adreno_show_object()` ascii85-encodes each object in place on first show (`*encoded` check, `*ptr = encode(buf)`, `kvfree(buf)`) and `msm_gpu_devcoredump_read()` renders without any lock, so two readers of one devcd (IGT + the udev copier) double-free and see a changing dump length. Pre-existing in mainline (a6xx/a7xx share it); a8xx is newly exposed by Task 3.
+
+**Files:**
+- Modify: `drivers/gpu/drm/msm/msm_gpu.h` (struct msm_gpu: `struct mutex crashstate_show_lock`, kernel-doc)
+- Modify: `drivers/gpu/drm/msm/msm_gpu.c` (`mutex_init` next to `INIT_WORK` in msm_gpu_init; lock across the render in `msm_gpu_devcoredump_read`, after `msm_gpu_crashstate_get()` and released before `msm_gpu_crashstate_put()` so it never nests with `gpu->lock`)
+- Modify (lab): `tablet/erhai-gpu-coredump` (free write: `{ echo 1 > "$dev/data"; } 2>/dev/null` so a vanished devcd doesn't print a bash redirect error)
+
+- [ ] **Step 1:** kernel commit `drm/msm: serialize devcoredump reads of the crash state`, inserted before the LAB ONLY commit; Signed-off-by nadelacruz-00 only, no AI trace. Fixes: tag looked up in Task 9.
+- [ ] **Step 2:** builds with DEV_COREDUMP=y and =n (`erhai-gpu-71-build`, `erhai-gpu-71-build-nocd`), no new warnings.
+- [ ] **Step 3:** lab copier fix + test (vanished devcd at free time → no stderr), full test suite passes; commit.
+- [ ] **Step 4:** regenerate `candidates/71-a8xx-crashstate` (5 patches), local build first (`tools/build-local.sh`), then the user reinstalls, reboots, reruns `sudo erhai-gpu-lab g1 --yes`.
+Expected: 6/6 PASS, and `journalctl -k -b | grep -c 'Not a kmalloc'` = 0.
+
+---
+
 ### Task 9: Upstream and erhai PR preparation (T9)
 
 **Files:** none in the repos; drafts in `~/gpu-lab-evidence/upstream/`.
