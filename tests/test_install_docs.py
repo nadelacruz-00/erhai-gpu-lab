@@ -22,6 +22,15 @@ class InstallSh(unittest.TestCase):
             self.assertIn(needle, self.text)
         self.assertNotIn("enable erhai-gpu-lab-soak.timer", self.text)
 
+    def test_installs_coredump_chain(self):
+        for needle in ["erhai-gpu-coredump", "70-erhai-gpu-coredump.rules",
+                       "/etc/udev/rules.d/", "erhai-gpu-coredump@.service",
+                       "udevadm control --reload"]:
+            self.assertIn(needle, self.text)
+        self.assertRegex(self.text, r'UNIT_FILES="[^"]*erhai-gpu-coredump@\.service')
+        self.assertRegex(self.text, r'rm -f "\$RULE"')
+        self.assertNotIn("enable erhai-gpu-coredump", self.text)
+
     def test_no_charging_lab_paths_or_wording(self):
         self.assertNotIn("charging", self.text.lower())
         self.assertNotIn("/usr/local/sbin/erhai-lab\n", self.text)

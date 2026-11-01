@@ -1,0 +1,70 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Save a GPU devcoredump, then free it so the kernel can capture the next one.
+#
+#   erhai-gpu-coredump devcdN
+#
+# Started by udev (70-erhai-gpu-coredump.rules) via erhai-gpu-coredump@.service.
+# Only dumps whose failing_device is the GPU are touched; other drivers'
+# devcoredumps (Wi-Fi, DSPs, display) are left alone. Output:
+# $ERHAI_COREDUMP_DIR/<boot8>-<epoch>[-N].bin (0600), newest ERHAI_COREDUMP_KEEP kept.
+# Exit 0 saved+freed / not GPU / gone, 1 copy failed (still freed), 2 usage.
+set -u
+
+ROOT=${ERHAI_DEVCD_ROOT:-/sys/class/devcoredump}
+DIR=${ERHAI_COREDUMP_DIR:-/var/lib/erhai-gpu/coredumps}
+BOOT_FILE=${ERHAI_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
+KEEP=${ERHAI_COREDUMP_KEEP:-20}
+GPU=${ERHAI_GPU_DEVICE:-3d00000.gpu}
+NOW=${ERHAI_NOW:-$(date +%s)}
+
+log() { echo "erhai-gpu-coredump: $*" >&2; }
+
+[[ $# -eq 1 && $1 =~ ^devcd[0-9]+$ ]] || { log "usage: erhai-gpu-coredump devcdN"; exit 2; }
+name=$1
+dev=$ROOT/$name
+
+[[ -d $dev ]] || exit 0
+fd=$(readlink -f "$dev/failing_device" 2>/dev/null) || exit 0
+[[ -n $fd && ${fd##*/} == "$GPU" ]] || exit 0
+
+rc=0
+boot=""
+read -r boot < "$BOOT_FILE" 2>/dev/null
+boot=${boot:0:8}
+[[ -n $boot ]] || boot=unknown
+
+umask 077
+tmp=$DIR/.$name.$$.tmp
+[[ -d $DIR ]] || mkdir -p -m 0700 "$DIR" 2>/dev/null
+if cp "$dev/data" "$tmp" 2>/dev/null; then
+	final=$DIR/$boot-$NOW.bin
+	n=2
+	while [[ -e $final ]]; do
+		final=$DIR/$boot-$NOW-$n.bin
+		n=$((n + 1))
+	done
+	if mv "$tmp" "$final" 2>/dev/null; then
+		log "saved $final"
+	else
+		log "copy failed: cannot move into $DIR"
+		rm -f "$tmp"
+		rc=1
+	fi
+else
+	log "copy failed: cannot copy $dev/data to $DIR"
+	rm -f "$tmp"
+	rc=1
+fi
+
+# Always free the dump, so the kernel can take the next one.
+echo 1 > "$dev/data" 2>/dev/null || log "could not free $name"
+
+# Rotate: delete oldest *.bin by mtime until at most KEEP remain.
+mapfile -t files < <(ls -1t "$DIR"/*.bin 2>/dev/null)
+for ((i = KEEP; i < ${#files[@]}; i++)); do
+	rm -f "${files[i]}"
+done
+
+exit $rc

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Started by udev (70-erhai-gpu-coredump.rules) for one devcoredump; not enabled.
+[Unit]
+Description=Save and free GPU devcoredump %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/erhai-gpu-lab/erhai-gpu-coredump %i
