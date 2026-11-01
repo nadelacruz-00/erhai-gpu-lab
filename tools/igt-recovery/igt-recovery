@@ -49,31 +49,74 @@ build() {
 	echo "igt-recovery: built $BIN ($IGT_TAG $IGT_COMMIT)"
 }
 
+# dump_check MARKER: did the udev copier save a complete GPU devcoredump after
+# MARKER, and does debugfs still produce one? Prints one line dump=<...>;
+# rc 0 only for dump=ok. Needs no root.
+dump_check() {
+	local marker=$1 dir=${ERHAI_COREDUMP_DIR:-/var/lib/erhai-gpu/coredumps}
+	local wait=${ERHAI_DUMP_WAIT_S:-30}
+	local glob=${ERHAI_DEBUGFS_GPU_GLOB:-/sys/kernel/debug/dri/*/gpu}
+	local newest="" i f sec pat
+	for ((i = 0; ; i++)); do
+		newest=$(find "$dir" -name '*.bin' -newer "$marker" -printf '%T@ %p\n' 2>/dev/null |
+			sort -rn | head -n1 | cut -d' ' -f2-)
+		[ -n "$newest" ] && break
+		[ "$i" -ge "$wait" ] && { echo "dump=missing"; return 1; }
+		sleep 1
+	done
+	for sec in ringbuffer gmu-log gmu-hfi queue-history; do
+		pat="^$sec:"
+		[ "$sec" = queue-history ] && pat='queue-history\['
+		grep -aq -- "$pat" "$newest" || { echo "dump=incomplete:$sec"; return 1; }
+	done
+	f=""
+	for i in $glob; do
+		[ -r "$i" ] && [ -f "$i" ] && { f=$i; break; }
+	done
+	[ -n "$f" ] || { echo "dump=incomplete:debugfs"; return 1; }
+	local txt
+	txt=$(cat "$f" 2>/dev/null) || { echo "dump=incomplete:debugfs"; return 1; }
+	for sec in ringbuffer gmu-log gmu-hfi queue-history; do
+		pat="^$sec:"
+		[ "$sec" = queue-history ] && pat='queue-history\['
+		grep -aq -- "$pat" <<<"$txt" || { echo "dump=incomplete:debugfs-$sec"; return 1; }
+	done
+	echo "dump=ok"
+}
+
 run() {
 	local sub=$1
 	[ "$(id -u)" = 0 ] || die "run needs root (debugfs, devcoredump)"
 	[ -x "$BIN" ] || die "$BIN missing; run: tools/igt-recovery/igt-recovery build"
 	mkdir -p "$EVIDENCE"
-	local ts out since rc
+	local ts out since rc marker
 	ts=$(date +%Y%m%d-%H%M%S)
 	out=$EVIDENCE/g1-$sub-$ts.txt
 	since=$(date '+%Y-%m-%d %H:%M:%S')
 	echo "igt-recovery: $sub at $since, kernel $(uname -r), control=$(cat /sys/devices/platform/soc@0/3d00000.gpu/power/control 2>/dev/null)"
+	marker=$EVIDENCE/.g1-marker-$ts
+	touch "$marker"
 	timeout 120 "$BIN" --run-subtest "$sub"
 	rc=$?
 	sleep 3
 	journalctl -k --since "$since" --no-pager >"$out" 2>&1
 
-	local rec cx hw
+	local rec cx hw dump=n/a
+	if [ "$sub" = gpu-fault ]; then
+		dump=$(dump_check "$marker")
+		dump=${dump#dump=}
+	fi
+	rm -f "$marker"
 	rec=$(grep -c 'hangcheck recover!' "$out")
 	cx=$(grep -c "cx gdsc didn't collapse" "$out")
 	hw=$(grep -ciE 'hw_init.*fail|failed to (re)?init|Couldn.t power up the GPU' "$out")
-	echo "igt-recovery: subtest=$sub igt_rc=$rc recover=$rec cx_not_collapsed=$cx hw_init_errors=$hw log=$out"
-	if [ "$rc" = 0 ] && [ "$rec" = 1 ] && [ "$cx" = 0 ] && [ "$hw" = 0 ]; then
+	echo "igt-recovery: subtest=$sub igt_rc=$rc recover=$rec cx_not_collapsed=$cx hw_init_errors=$hw dump=$dump log=$out"
+	if [ "$rc" = 0 ] && [ "$rec" = 1 ] && [ "$cx" = 0 ] && [ "$hw" = 0 ] &&
+	   { [ "$sub" != gpu-fault ] || [ "$dump" = ok ]; }; then
 		echo "PASS g1 $sub"
 		return 0
 	fi
-	echo "FAIL g1 $sub (want igt_rc=0 recover=1 cx_not_collapsed=0 hw_init_errors=0)"
+	echo "FAIL g1 $sub (want igt_rc=0 recover=1 cx_not_collapsed=0 hw_init_errors=0 dump=ok)"
 	return 1
 }
 
@@ -86,5 +129,9 @@ run)
 	*) die "unknown subtest '$sub' (gpu-fault|hangcheck)" ;;
 	esac
 	;;
-*) echo "usage: $0 build | run [gpu-fault|hangcheck]" >&2; exit 2 ;;
+dump-check)
+	[ -n "${2:-}" ] || die "usage: $0 dump-check <marker-file>"
+	dump_check "$2"
+	;;
+*) echo "usage: $0 build | run [gpu-fault|hangcheck] | dump-check <marker>" >&2; exit 2 ;;
 esac

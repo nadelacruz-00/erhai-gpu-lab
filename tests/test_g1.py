@@ -4,7 +4,10 @@
 import argparse
 import contextlib
 import io
+import os
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -271,6 +274,77 @@ class CmdG1Test(unittest.TestCase):
             run_one.assert_not_called()
             self.assertFalse(summary.exists())
             self.assertEqual(list(summary.parent.glob("g1-summary-*")), [])
+
+
+class DumpCheckTest(unittest.TestCase):
+    """igt-recovery dump-check <marker>: saved devcoredump completeness."""
+
+    FULL = "ringbuffer:\ngmu-log:\ngmu-hfi:\nqueue-history[0]:\n"
+    SCRIPT = str(Path(__file__).resolve().parent.parent / "tools/igt-recovery/igt-recovery")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.d = Path(self._tmp.name)
+        self.dumps = self.d / "coredumps"
+        self.dumps.mkdir()
+        self.marker = self.d / "marker"
+        self.marker.write_text("")
+        os.utime(self.marker, (1000, 1000))
+        self.dbg = self.d / "dbg" / "gpu"
+        self.dbg.parent.mkdir()
+        self.dbg.write_text(self.FULL)
+
+    def bin(self, text, mtime=2000, name="aaaaaaaa-1.bin"):
+        f = self.dumps / name
+        f.write_text(text)
+        os.utime(f, (mtime, mtime))
+
+    def check(self, wait="1", glob=None):
+        env = dict(os.environ, ERHAI_COREDUMP_DIR=str(self.dumps),
+                   ERHAI_DUMP_WAIT_S=wait,
+                   ERHAI_DEBUGFS_GPU_GLOB=glob or str(self.dbg))
+        t = time.monotonic()
+        r = subprocess.run(["bash", self.SCRIPT, "dump-check", str(self.marker)],
+                           env=env, capture_output=True, text=True)
+        return r.returncode, r.stdout, time.monotonic() - t
+
+    def test_dump_check_ok(self):
+        self.bin(self.FULL)
+        rc, out, _ = self.check()
+        self.assertEqual((rc, out), (0, "dump=ok\n"))
+
+    def test_dump_check_reports_missing_bin(self):
+        rc, out, dt = self.check()
+        self.assertEqual((rc, out), (1, "dump=missing\n"))
+        self.assertLess(dt, 3)
+
+    def test_dump_check_reports_incomplete(self):
+        self.bin(self.FULL.replace("gmu-hfi:\n", ""))
+        rc, out, _ = self.check()
+        self.assertEqual((rc, out), (1, "dump=incomplete:gmu-hfi\n"))
+
+    def test_old_bin_is_ignored(self):
+        self.bin(self.FULL, mtime=500)
+        rc, out, _ = self.check()
+        self.assertEqual((rc, out), (1, "dump=missing\n"))
+
+    def test_dump_check_uses_newest_bin(self):
+        self.bin("ringbuffer:\n", mtime=1500, name="aaaaaaaa-1.bin")
+        self.bin(self.FULL, mtime=2500, name="aaaaaaaa-2.bin")
+        rc, out, _ = self.check()
+        self.assertEqual((rc, out), (0, "dump=ok\n"))
+
+    def test_dump_check_reports_missing_debugfs(self):
+        self.bin(self.FULL)
+        rc, out, _ = self.check(glob=str(self.d / "nothing*" / "gpu"))
+        self.assertEqual((rc, out), (1, "dump=incomplete:debugfs\n"))
+
+    def test_dump_check_reports_incomplete_debugfs(self):
+        self.bin(self.FULL)
+        self.dbg.write_text("ringbuffer:\ngmu-log:\n")
+        rc, out, _ = self.check()
+        self.assertEqual((rc, out), (1, "dump=incomplete:debugfs-gmu-hfi\n"))
 
 
 if __name__ == "__main__":
