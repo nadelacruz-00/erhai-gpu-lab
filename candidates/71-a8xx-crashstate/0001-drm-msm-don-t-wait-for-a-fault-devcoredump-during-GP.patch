@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 20:49:43 +0800
+Subject: [PATCH] drm/msm: don't wait for a fault devcoredump during GPU
+ recovery
+
+adreno_fault_handler() calls reinit_completion() on
+fault_coredump_done and then blocks in
+msm_gpu_fault_crashstate_capture() on mutex_lock(&gpu->lock) to take
+the devcoredump.
+
+If recover_worker() is already running, it holds gpu->lock and, from
+the runtime suspend in a8xx_recover(), may time out in
+a6xx_hfi_wait_for_msg_interrupt() or a6xx_gmu_set_oob(). Both loops
+then fall into an unbounded wait_for_completion() on
+fault_coredump_done, which has just been re-initialised and which only
+the fault handler can complete. The fault handler is waiting for
+gpu->lock, which recovery will not release until the wait returns, so
+neither side makes progress.
+
+A fault dump that needs gpu->lock can never complete while recovery
+holds it, so waiting for it is wrong. Add a recovery_in_progress flag
+to struct msm_gpu, set by recover_worker() under gpu->lock, and use it
+in two places: the fault handler no longer starts a devcoredump
+capture while recovery is running, and both GMU wait loops stop
+waiting for the completion and fall through to their normal timeout
+handling instead.
+
+On an OnePlus Pad 3 (Adreno 830) recoveries that saw a CP page fault
+within 2 s of "hangcheck recover!" were stuck 3 of 3 times, while
+12 of 12 recoveries without such a fault completed.
+
+Link: https://www.mail-archive.com/freedreno@lists.freedesktop.org/msg39108.html
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/adreno/a6xx_gmu.c   | 7 +++++--
+ drivers/gpu/drm/msm/adreno/a6xx_hfi.c   | 7 +++++--
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c | 3 ++-
+ drivers/gpu/drm/msm/msm_gpu.c           | 2 ++
+ drivers/gpu/drm/msm/msm_gpu.h           | 7 +++++++
+ 5 files changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index f9ffe6c66c3..3f1e036e2dd 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -432,12 +432,15 @@ int a6xx_gmu_set_oob(struct a6xx_gmu *gmu, enum a6xx_gmu_oob_state state)
+ 		if (!ret)
+ 			break;
+ 
+-		if (completion_done(&a6xx_gpu->base.fault_coredump_done))
++		if (completion_done(&a6xx_gpu->base.fault_coredump_done) ||
++		    READ_ONCE(a6xx_gpu->base.base.recovery_in_progress))
+ 			break;
+ 
+ 		/* We may timeout because the GMU is temporarily wedged from
+ 		 * pending faults from the GPU and we are taking a devcoredump.
+-		 * Wait until the MMU is resumed and try again.
++		 * Wait until the MMU is resumed and try again. A fault dump
++		 * cannot complete while recovery holds gpu->lock, so don't
++		 * wait for one then.
+ 		 */
+ 		wait_for_completion(&a6xx_gpu->base.fault_coredump_done);
+ 	} while (true);
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+index 186a73c0b99..c606b366037 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+@@ -122,12 +122,15 @@ static int a6xx_hfi_wait_for_msg_interrupt(struct a6xx_gmu *gmu, u32 id, u32 seq
+ 		if (!ret)
+ 			break;
+ 
+-		if (completion_done(&a6xx_gpu->base.fault_coredump_done))
++		if (completion_done(&a6xx_gpu->base.fault_coredump_done) ||
++		    READ_ONCE(a6xx_gpu->base.base.recovery_in_progress))
+ 			break;
+ 
+ 		/* We may timeout because the GMU is temporarily wedged from
+ 		 * pending faults from the GPU and we are taking a devcoredump.
+-		 * Wait until the MMU is resumed and try again.
++		 * Wait until the MMU is resumed and try again. A fault dump
++		 * cannot complete while recovery holds gpu->lock, so don't
++		 * wait for one then.
+ 		 */
+ 		wait_for_completion(&a6xx_gpu->base.fault_coredump_done);
+ 	} while (true);
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index e133b018bfd..f6a0102b86f 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -289,7 +289,8 @@ int adreno_fault_handler(struct msm_gpu *gpu, unsigned long iova, int flags,
+ 	struct msm_mmu *mmu = to_msm_vm(gpu->vm)->mmu;
+ 	const char *type = "UNKNOWN";
+ 	bool do_devcoredump = info && (info->fsr & ARM_SMMU_FSR_SS) &&
+-		!READ_ONCE(gpu->crashstate);
++		!READ_ONCE(gpu->crashstate) &&
++		!READ_ONCE(gpu->recovery_in_progress);
+ 	unsigned long irq_flags;
+ 
+ 	/*
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 0c2c3563625..caa86279f56 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -474,6 +474,7 @@ static void recover_worker(struct kthread_work *work)
+ 	int i;
+ 
+ 	mutex_lock(&gpu->lock);
++	WRITE_ONCE(gpu->recovery_in_progress, true);
+ 
+ 	DRM_DEV_ERROR(dev->dev, "%s: hangcheck recover!\n", gpu->name);
+ 
+@@ -585,6 +586,7 @@ static void recover_worker(struct kthread_work *work)
+ 	pm_runtime_put(&gpu->pdev->dev);
+ 
+ out_unlock:
++	WRITE_ONCE(gpu->recovery_in_progress, false);
+ 	mutex_unlock(&gpu->lock);
+ 
+ 	msm_gpu_retire(gpu);
+diff --git a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
+index d27d54bdb7a..b2c85aa5561 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -258,6 +258,13 @@ struct msm_gpu {
+ 
+ 	struct msm_gpu_state *crashstate;
+ 
++	/**
++	 * @recovery_in_progress: set by recover_worker() under @lock, so that
++	 * fault capture and GMU waits don't wait on a fault devcoredump that
++	 * can't complete while recovery holds @lock.
++	 */
++	bool recovery_in_progress;
++
+ 	/* True if the hardware supports expanded apriv (a650 and newer) */
+ 	bool hw_apriv;
+ 

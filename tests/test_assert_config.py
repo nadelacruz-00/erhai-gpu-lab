@@ -63,6 +63,14 @@ class AssertConfig(unittest.TestCase):
         r = run(frag, frag)                       # a .config that matches the fragment exactly
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_candidate_71_detects_hung_tasks(self):
+        frag = (CANDIDATES / "71-a8xx-crashstate" / "extra.config").read_text().splitlines()
+        for sym in ("CONFIG_SM_GPUCC_8750=m", "CONFIG_FTRACE=y", "CONFIG_TRACING=y",
+                    "CONFIG_TRACEPOINTS=y", "CONFIG_DETECT_HUNG_TASK=y",
+                    "CONFIG_DEFAULT_HUNG_TASK_TIMEOUT=120"):
+            with self.subTest(symbol=sym):
+                self.assertIn(sym, frag)
+
     def test_dropped_dpm_watchdog_fails(self):
         frag = (CANDIDATES / "60-gpu-reference" / "extra.config").read_text()
         r = run(frag, frag.replace("CONFIG_DPM_WATCHDOG=y\n", "# CONFIG_DPM_WATCHDOG is not set\n"))

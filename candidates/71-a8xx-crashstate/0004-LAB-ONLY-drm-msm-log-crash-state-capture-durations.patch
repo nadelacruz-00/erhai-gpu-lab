@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 21:04:44 +0800
+Subject: [PATCH] LAB ONLY: drm/msm: log crash state capture durations
+
+Not for upstream; input for the bounded-wait RFC (lab TODOS).
+
+Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/msm_gpu.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 6e326281d12..45fd205726b 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -485,6 +485,7 @@ static void recover_worker(struct kthread_work *work)
+ 	char *comm = NULL, *cmd = NULL;
+ 	unsigned int noreclaim_flag;
+ 	struct task_struct *task;
++	ktime_t start;
+ 	int i;
+ 
+ 	mutex_lock(&gpu->lock);
+@@ -542,7 +543,10 @@ static void recover_worker(struct kthread_work *work)
+ 
+ 	/* Record the crash state */
+ 	pm_runtime_get_sync(&gpu->pdev->dev);
++	start = ktime_get();
+ 	msm_gpu_crashstate_capture(gpu, submit, NULL, comm, cmd);
++	dev_info(gpu->dev->dev, "erhai-lab: crashstate capture (%s) took %lld us\n",
++		 "recover", ktime_us_delta(ktime_get(), start));
+ 
+ 	memalloc_noreclaim_restore(noreclaim_flag);
+ 
+@@ -612,6 +616,7 @@ void msm_gpu_fault_crashstate_capture(struct msm_gpu *gpu, struct msm_gpu_fault_
+ 	struct msm_ringbuffer *cur_ring = gpu->funcs->active_ring(gpu);
+ 	char *comm = NULL, *cmd = NULL;
+ 	unsigned int noreclaim_flag;
++	ktime_t start;
+ 
+ 	mutex_lock(&gpu->lock);
+ 
+@@ -633,7 +638,10 @@ void msm_gpu_fault_crashstate_capture(struct msm_gpu *gpu, struct msm_gpu_fault_
+ 
+ 	/* Record the crash state */
+ 	pm_runtime_get_sync(&gpu->pdev->dev);
++	start = ktime_get();
+ 	msm_gpu_crashstate_capture(gpu, submit, fault_info, comm, cmd);
++	dev_info(gpu->dev->dev, "erhai-lab: crashstate capture (%s) took %lld us\n",
++		 "fault", ktime_us_delta(ktime_get(), start));
+ 	pm_runtime_put_sync(&gpu->pdev->dev);
+ 
+ 	memalloc_noreclaim_restore(noreclaim_flag);

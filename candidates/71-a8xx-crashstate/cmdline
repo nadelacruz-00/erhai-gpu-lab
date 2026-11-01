@@ -1,0 +1,1 @@
+root=PARTLABEL=linux rootwait rw rootfstype=ext4 fw_devlink=off console=tty0 loglevel=4 clk_ignore_unused pd_ignore_unused panic=30 usbcore.autosuspend=-1 log_buf_len=8M
