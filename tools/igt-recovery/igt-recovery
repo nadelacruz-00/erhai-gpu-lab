@@ -49,10 +49,16 @@ build() {
 	echo "igt-recovery: built $BIN ($IGT_TAG $IGT_COMMIT)"
 }
 
-# dump_check MARKER: did the udev copier save a complete GPU devcoredump after
-# MARKER, and does debugfs still produce one? Prints one line dump=<...>;
-# rc 0 only for dump=ok. The subcommand itself needs no root, but reading the
-# real debugfs gpu file does.
+# dump_check MARKER: does debugfs still produce a complete GPU dump, and was a
+# complete devcoredump saved by the udev copier after MARKER? Prints one line
+# dump=<...>; rc 0 for dump=ok (new .bin and debugfs both complete) and
+# dump=debugfs-only (no new .bin). IGT's msm_recovery calls
+# read_and_clear_devcore() itself: it reads /sys/class/devcoredump/devcd*/data
+# within 1 s and frees it, racing our copier, which then may find the devcd
+# gone. So a missing .bin is not a failure once $ERHAI_DUMP_WAIT_S has given
+# the copier its chance; the debugfs check is the required one. A new .bin
+# missing a section is still a failure (a truncated saved dump is a defect).
+# The subcommand itself needs no root, but reading the real debugfs gpu file does.
 dump_check() {
 	local marker=$1 dir=${ERHAI_COREDUMP_DIR:-/var/lib/erhai-gpu/coredumps}
 	local wait=${ERHAI_DUMP_WAIT_S:-30}
@@ -62,14 +68,16 @@ dump_check() {
 		newest=$(find "$dir" -name '*.bin' -newer "$marker" -printf '%T@ %p\n' 2>/dev/null |
 			sort -rn | head -n1 | cut -d' ' -f2-)
 		[ -n "$newest" ] && break
-		[ "$i" -ge "$wait" ] && { echo "dump=missing"; return 1; }
+		[ "$i" -ge "$wait" ] && break
 		sleep 1
 	done
-	for sec in ringbuffer gmu-log gmu-hfi queue-history; do
-		pat="^$sec:"
-		[ "$sec" = queue-history ] && pat='queue-history\['
-		grep -aq -- "$pat" "$newest" || { echo "dump=incomplete:$sec"; return 1; }
-	done
+	if [ -n "$newest" ]; then
+		for sec in ringbuffer gmu-log gmu-hfi queue-history; do
+			pat="^$sec:"
+			[ "$sec" = queue-history ] && pat='queue-history\['
+			grep -aq -- "$pat" "$newest" || { echo "dump=incomplete:$sec"; return 1; }
+		done
+	fi
 	f=""
 	for i in $glob; do
 		[ -r "$i" ] && [ -f "$i" ] && { f=$i; break; }
@@ -82,7 +90,7 @@ dump_check() {
 		[ "$sec" = queue-history ] && pat='queue-history\['
 		grep -aq -- "$pat" <<<"$txt" || { echo "dump=incomplete:debugfs-$sec"; return 1; }
 	done
-	echo "dump=ok"
+	if [ -n "$newest" ]; then echo "dump=ok"; else echo "dump=debugfs-only"; fi
 }
 
 run() {
@@ -113,12 +121,12 @@ run() {
 	hw=$(grep -ciE 'hw_init.*fail|failed to (re)?init|Couldn.t power up the GPU' "$out")
 	echo "igt-recovery: subtest=$sub igt_rc=$rc recover=$rec cx_not_collapsed=$cx hw_init_errors=$hw dump=$dump log=$out"
 	if [ "$rc" = 0 ] && [ "$rec" = 1 ] && [ "$cx" = 0 ] && [ "$hw" = 0 ] &&
-	   { [ "$sub" != gpu-fault ] || [ "$dump" = ok ]; }; then
+	   { [ "$sub" != gpu-fault ] || [ "$dump" = ok ] || [ "$dump" = debugfs-only ]; }; then
 		echo "PASS g1 $sub"
 		return 0
 	fi
 	want="igt_rc=0 recover=1 cx_not_collapsed=0 hw_init_errors=0"
-	[ "$sub" = gpu-fault ] && want="$want dump=ok"
+	[ "$sub" = gpu-fault ] && want="$want dump=ok|debugfs-only"
 	echo "FAIL g1 $sub (want $want)"
 	return 1
 }

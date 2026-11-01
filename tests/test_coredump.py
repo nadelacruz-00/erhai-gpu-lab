@@ -71,6 +71,18 @@ class Coredump(unittest.TestCase):
         self.assertEqual(self.bins(), [])
         self.assertEqual(self.data(), "1")
 
+    def test_devcd_vanishing_mid_copy_exits_quietly(self):
+        # Another reader (IGT) consumed the dump: data is gone, cat fails.
+        data = self.root / "devcd1" / "data"
+        data.unlink()
+        data.symlink_to(self.tmp / "gone")
+        r = self.run_script("devcd1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.bins(), [])
+        self.assertEqual(list(self.store.glob(".*.tmp")), [])
+        self.assertIn("vanished during copy (consumed elsewhere)", r.stderr)
+        self.assertNotIn("could not free", r.stderr)
+
     def test_rotation_keeps_newest_20(self):
         for i in range(1, 21):
             p = self.store / f"old-{i}.bin"

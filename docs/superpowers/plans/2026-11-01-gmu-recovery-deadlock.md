@@ -34,7 +34,7 @@
 1. **Other drivers' devcoredumps** (ath12k Wi-Fi, remoteproc ADSP/modem, the msm display snapshot) appear in `/sys/class/devcoredump` too. The copier must leave any devcd whose `failing_device` is not the GPU completely untouched: no copy and no free. Test in Task 5 (`test_non_gpu_devcd_is_untouched`).
 2. **Two GPU dumps back to back** (a wedge storm: 12 recoveries in 28 min). Each copier run handles only its own `devcdN`, and file names don't collide when two dumps land in the same second. Test in Task 5 (`test_same_second_names_do_not_collide`).
 3. **The copier started on a devcd that already vanished** (freed by timeout or another reader). It must exit cleanly without creating an empty `.bin`. Test in Task 5 (`test_missing_devcd_exits_quietly`).
-4. **g1 on a kernel without a8xx dumps** (an older candidate or the package kernel). The dump check must fail with a message naming the missing `.bin`, not hang or pass. Test in Task 6 (`test_dump_check_reports_missing_bin`).
+4. **g1 on a kernel without a8xx dumps** (an older candidate or the package kernel). The dump check must not hang; with no readable complete debugfs dump it fails (`dump=incomplete:debugfs`). A missing `.bin` alone is `dump=debugfs-only` (IGT may consume the devcd). Tests in Task 6 (`test_dump_check_reports_missing_bin`, `test_dump_check_missing_bin_and_debugfs_fails`).
 5. **A copier read blocked during a hung recovery** (eng review A-1). The service must not hold up boot or udev. The unit has no `[Install]`, is started only by udev and runs as `Type=oneshot`. Test in Task 5 (`test_unit_is_udev_started_oneshot`).
 
 ---
@@ -260,15 +260,16 @@ git commit -m "coredump: save and free every GPU devcoredump (udev-started copie
 
 **Interfaces:**
 - Consumes: `$ERHAI_COREDUMP_DIR/*.bin` from Task 5 (default `/var/lib/erhai-gpu/coredumps`).
-- Produces: in `run()`, for `gpu-fault` only, a new summary field `dump=<ok|missing|incomplete:<section>>` on the `igt-recovery: subtest=...` line. PASS also requires `dump=ok`. Env overrides for tests: `ERHAI_COREDUMP_DIR`, `ERHAI_DUMP_WAIT_S` (default 30), `ERHAI_DEBUGFS_GPU_GLOB` (default `/sys/kernel/debug/dri/*/gpu`).
+- Produces: in `run()`, for `gpu-fault` only, a new summary field `dump=<ok|debugfs-only|incomplete:<section>|incomplete:debugfs[-<section>]>` on the `igt-recovery: subtest=...` line. PASS also requires `dump=ok` or `dump=debugfs-only` (IGT's `read_and_clear_devcore()` may consume the devcd before our copier, so a saved `.bin` is not required; the debugfs check is). Env overrides for tests: `ERHAI_COREDUMP_DIR`, `ERHAI_DUMP_WAIT_S` (default 30), `ERHAI_DEBUGFS_GPU_GLOB` (default `/sys/kernel/debug/dri/*/gpu`).
 
 - [ ] **Step 1: Write the failing tests**
 
 In `tests/test_g1.py`, add a class that runs the wrapper's dump-check function in isolation: extract it into a sourced shell function `dump_check <marker-file>`, callable as `igt-recovery dump-check <marker>`. Tests:
 - `test_dump_check_ok`: a `.bin` newer than the marker containing `ringbuffer:`, `gmu-log:`, `gmu-hfi:`, `queue-history[`, plus a fake debugfs gpu file with the same lines → stdout `dump=ok`, rc 0.
-- `test_dump_check_reports_missing_bin`: no new `.bin`, `ERHAI_DUMP_WAIT_S=1` → `dump=missing`, rc 1, within 3 s.
+- `test_dump_check_reports_missing_bin`: no new `.bin`, complete debugfs, `ERHAI_DUMP_WAIT_S=1` → `dump=debugfs-only`, rc 0, within 3 s.
+- `test_dump_check_missing_bin_and_debugfs_fails`: no new `.bin`, no readable debugfs → `dump=incomplete:debugfs`, rc 1.
 - `test_dump_check_reports_incomplete`: `.bin` without `gmu-hfi:` → `dump=incomplete:gmu-hfi`, rc 1.
-- `test_old_bin_is_ignored`: a `.bin` older than the marker only → `dump=missing`.
+- `test_old_bin_is_ignored`: a `.bin` older than the marker only → `dump=debugfs-only` (the old file is ignored).
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -277,7 +278,7 @@ Expected: FAIL (no `dump-check` subcommand).
 
 - [ ] **Step 3: Implement**
 
-`run()` touches a marker before starting the IGT binary. For `gpu-fault`, after the journal capture it calls `dump_check` (poll once per second up to `$ERHAI_DUMP_WAIT_S` for `find $ERHAI_COREDUMP_DIR -name '*.bin' -newer $marker`; check the four headers in the newest one, and the same four in the first readable `$ERHAI_DEBUGFS_GPU_GLOB`). The pass condition gains `dump=ok`; the `FAIL g1 ...` hint lists `dump=ok`. `hangcheck` runs skip the dump check (`dump=n/a`). Add the `dump-check` case to the `case` dispatcher.
+`run()` touches a marker before starting the IGT binary. For `gpu-fault`, after the journal capture it calls `dump_check` (poll once per second up to `$ERHAI_DUMP_WAIT_S` for `find $ERHAI_COREDUMP_DIR -name '*.bin' -newer $marker`; a timeout falls through instead of failing; check the four headers in the newest one if present, and the same four in the first readable `$ERHAI_DEBUGFS_GPU_GLOB`, which is required). The pass condition gains `dump=ok` or `dump=debugfs-only`; the `FAIL g1 ...` hint lists `dump=ok|debugfs-only`. `hangcheck` runs skip the dump check (`dump=n/a`). Add the `dump-check` case to the `case` dispatcher.
 
 - [ ] **Step 4: Run them to verify they pass**
 
@@ -345,8 +346,8 @@ Expected: g0 has the same 2 config FAILs as 70-pr or fewer (`hung_task_timeout_s
 `sudo erhai-gpu-lab g1 --yes`
 Expected:
 - 6/6 PASS;
-- every gpu-fault line has `dump=ok`;
-- `/var/lib/erhai-gpu/coredumps/` gains at least 5 `.bin` files (0600) (a gpu-fault run can produce both a fault-path and a recover-path dump);
+- every gpu-fault line has `dump=ok` or `dump=debugfs-only`;
+- `/var/lib/erhai-gpu/coredumps/` may gain `.bin` files (0600); at least 1 per g1 run is not guaranteed because IGT clears the devcd itself (a gpu-fault run can produce both a fault-path and a recover-path dump);
 - the journal has `erhai-lab: crashstate capture (...) took N us` lines (record the max N of the `(fault)` and `(recover)` lines separately for the RFC TODO).
 
 - [ ] **Step 3: Natural repro, 30 min**
@@ -363,7 +364,7 @@ Expected:
 - [ ] **Step 4: devcoredump disabled (last test of this boot)**
 
 `echo 1 | sudo tee /sys/class/devcoredump/disabled`, then `sudo erhai-gpu-lab g1 --yes --runs 1 --hangcheck 0`.
-Expected: `recover=1`, the GPU active again, no hang. The dump check reports `dump=missing`, so this g1 run records FAIL by design (dumps are disabled); judge it only on `recover=1` and the GPU returning to active. Reboot afterwards (the knob is write-once).
+Expected: `recover=1`, the GPU active again, no hang. The dump check reports `dump=debugfs-only` (no `.bin`, debugfs still complete); judge it on `recover=1` and the GPU returning to active. Reboot afterwards (the knob is write-once).
 
 ---
 

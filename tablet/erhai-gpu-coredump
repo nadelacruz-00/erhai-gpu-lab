@@ -9,7 +9,9 @@
 # Only dumps whose failing_device is the GPU are touched; other drivers'
 # devcoredumps (Wi-Fi, DSPs, display) are left alone. Output:
 # $ERHAI_COREDUMP_DIR/<boot8>-<epoch>[-N].bin (0600), newest ERHAI_COREDUMP_KEEP kept.
-# Exit 0 saved+freed / not GPU / gone, 1 copy failed (still freed), 2 usage.
+# Exit 0 saved+freed / not GPU / gone / consumed by another reader (IGT's
+# msm_recovery reads and frees the devcd itself), 1 copy failed (still freed),
+# 2 usage.
 set -u
 
 ROOT=${ERHAI_DEVCD_ROOT:-/sys/class/devcoredump}
@@ -57,13 +59,20 @@ if err=$(cat "$dev/data" 2>&1 > "$tmp"); then
 		rc=1
 	fi
 else
-	log "copy failed: ${err:-cannot read $dev/data into $DIR}"
 	rm -f "$tmp"
+	if [[ ! -d $dev || ! -e $dev/data ]]; then
+		log "$name vanished during copy (consumed elsewhere)"
+		exit 0
+	fi
+	log "copy failed: ${err:-cannot read $dev/data into $DIR}"
 	rc=1
 fi
 
-# Always free the dump, so the kernel can take the next one.
-echo 1 > "$dev/data" 2>/dev/null || log "could not free $name"
+# Always free the dump, so the kernel can take the next one. If it is already
+# gone, another reader freed it: not an error.
+if ! echo 1 > "$dev/data" 2>/dev/null; then
+	[[ -e $dev/data ]] && log "could not free $name"
+fi
 
 # Rotate: delete oldest *.bin by mtime until at most KEEP remain.
 mapfile -t files < <(ls -1t "$DIR"/*.bin 2>/dev/null)

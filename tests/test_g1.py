@@ -315,9 +315,14 @@ class DumpCheckTest(unittest.TestCase):
         self.assertEqual((rc, out), (0, "dump=ok\n"))
 
     def test_dump_check_reports_missing_bin(self):
+        # IGT's read_and_clear_devcore may consume the devcd before the copier.
         rc, out, dt = self.check()
-        self.assertEqual((rc, out), (1, "dump=missing\n"))
+        self.assertEqual((rc, out), (0, "dump=debugfs-only\n"))
         self.assertLess(dt, 3)
+
+    def test_dump_check_missing_bin_and_debugfs_fails(self):
+        rc, out, _ = self.check(glob=str(self.d / "nothing*" / "gpu"))
+        self.assertEqual((rc, out), (1, "dump=incomplete:debugfs\n"))
 
     def test_dump_check_reports_incomplete(self):
         self.bin(self.FULL.replace("gmu-hfi:\n", ""))
@@ -327,7 +332,7 @@ class DumpCheckTest(unittest.TestCase):
     def test_old_bin_is_ignored(self):
         self.bin(self.FULL, mtime=500)
         rc, out, _ = self.check()
-        self.assertEqual((rc, out), (1, "dump=missing\n"))
+        self.assertEqual((rc, out), (0, "dump=debugfs-only\n"))
 
     def test_dump_check_uses_newest_bin(self):
         self.bin("ringbuffer:\n", mtime=1500, name="aaaaaaaa-1.bin")
