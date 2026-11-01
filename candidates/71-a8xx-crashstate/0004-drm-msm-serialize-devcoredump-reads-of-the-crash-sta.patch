@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+From: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 Date: Sun, 1 Nov 2026 22:29:43 +0800
 Subject: [PATCH] drm/msm: serialize devcoredump reads of the crash state
 
@@ -39,7 +39,7 @@ a slow render can be killed.
 
 Fixes: 1df4289d5b23 ("drm/msm: Optimize adreno_show_object()")
 Cc: stable@vger.kernel.org
-Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Signed-off-by: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 ---
  drivers/gpu/drm/msm/msm_gpu.c | 10 ++++++++++
  drivers/gpu/drm/msm/msm_gpu.h |  8 ++++++++

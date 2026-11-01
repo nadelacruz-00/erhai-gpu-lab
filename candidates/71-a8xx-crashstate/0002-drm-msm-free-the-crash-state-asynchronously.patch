@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+From: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 Date: Sun, 1 Nov 2026 20:53:00 +0800
 Subject: [PATCH] drm/msm: free the crash state asynchronously
 
@@ -27,7 +27,7 @@ IGT msm_recovery gpu-fault recovers and the GPU resumes.
 
 Fixes: c0fec7f562ec ("drm/msm/gpu: Capture the GPU state on a GPU hang")
 Cc: stable@vger.kernel.org
-Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Signed-off-by: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 ---
  drivers/gpu/drm/msm/msm_gpu.c | 21 ++++++++++++++++++++-
  drivers/gpu/drm/msm/msm_gpu.h |  6 ++++++

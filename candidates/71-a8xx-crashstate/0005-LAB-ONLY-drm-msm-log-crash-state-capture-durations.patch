@@ -1,11 +1,11 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+From: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 Date: Sun, 1 Nov 2026 21:04:44 +0800
 Subject: [PATCH] LAB ONLY: drm/msm: log crash state capture durations
 
 Not for upstream; input for the bounded-wait RFC (lab TODOS).
 
-Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Signed-off-by: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 ---
  drivers/gpu/drm/msm/msm_gpu.c | 8 ++++++++
  1 file changed, 8 insertions(+)

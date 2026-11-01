@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+From: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 Date: Sun, 1 Nov 2026 20:49:43 +0800
 Subject: [PATCH] drm/msm: don't wait for a fault devcoredump during GPU
  recovery
@@ -46,7 +46,7 @@ all completed.
 Fixes: 50a0b122cfc8 ("drm/msm: Wait for MMU devcoredump when waiting for GMU")
 Cc: stable@vger.kernel.org
 Link: https://lore.kernel.org/all/CACu1E7EApr6Ne3XxFv4cUa2JuwNW2kfo1c5wSsAUN78iWyQ2sg@mail.gmail.com/
-Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Signed-off-by: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 ---
  drivers/gpu/drm/msm/adreno/a6xx_gmu.c   | 7 +++++--
  drivers/gpu/drm/msm/adreno/a6xx_hfi.c   | 7 +++++--

@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+From: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 Date: Sun, 1 Nov 2026 20:59:55 +0800
 Subject: [PATCH] drm/msm/a8xx: add a memory-only GPU crash state
 
@@ -29,7 +29,7 @@ and queue-history sections; capture takes 1.1 to 4.0 ms.
 
 a6xx/a7xx: build and pure-move review only, Tested-by welcome.
 
-Signed-off-by: nadelacruz-00 <323917690+nadelacruz-00@users.noreply.github.com>
+Signed-off-by: Nico Angelo Dela Cruz <nicoangelodelacruz@gmail.com>
 ---
  drivers/gpu/drm/msm/adreno/a6xx_gpu.c       |  7 +++
  drivers/gpu/drm/msm/adreno/a6xx_gpu.h       |  1 +
