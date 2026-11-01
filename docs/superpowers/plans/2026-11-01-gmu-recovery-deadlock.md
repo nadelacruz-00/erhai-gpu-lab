@@ -336,12 +336,12 @@ Expected: `build-local: 71-a8xx-crashstate built ...; assets in out/71-a8xx-cras
 
 **Files:** none (runs on the tablet). Every step needs the user at the tablet; sudo commands are the user's.
 
-- [ ] **Step 1: Install, queue g0, boot the candidate**
+- [x] **Step 1: Install, queue g0, boot the candidate**
 
 `sudo tablet/install.sh` (installs the copier chain), then `sudo erhai-gpu-lab fetch 71-a8xx-crashstate --from-dir out/71-a8xx-crashstate`, `sudo erhai-gpu-lab queue g0 --expect 71-a8xx-crashstate`, reboot and pick `…-lab-71-a8xx-crashstate` in rEFInd.
 Expected: g0 has the same 2 config FAILs as 70-pr or fewer (`hung_task_timeout_secs` should now PASS).
 
-- [ ] **Step 2: g1**
+- [x] **Step 2: g1**
 
 `sudo erhai-gpu-lab g1 --yes`
 Expected:
@@ -350,7 +350,7 @@ Expected:
 - `/var/lib/erhai-gpu/coredumps/` may gain `.bin` files (0600); at least 1 per g1 run is not guaranteed because IGT clears the devcd itself (a gpu-fault run can produce both a fault-path and a recover-path dump);
 - the journal has `erhai-lab: crashstate capture (...) took N us` lines (record the max N of the `(fault)` and `(recover)` lines separately for the RFC TODO).
 
-- [ ] **Step 3: Natural repro, 30 min**
+- [x] **Step 3: Natural repro, 30 min**
 
 Bluetooth on, HDB 630, music. Afterwards, check the journal: for every `hangcheck recover!`, `power/runtime_status` returned to `active` and the completed fence advanced within 10 s.
 Scenario reached: the run counts only if at least one `hangcheck recover!` is followed within ~2 s by `*** gpu fault` and/or a `Timeout waiting for GMU OOB` / `timed out waiting for response` line, and that same recovery meets the 10 s check (runtime active + fence advancing). If no such event occurs the run is inconclusive: extend it, do not count it as a pass. Record the max `erhai-lab: crashstate capture (fault)` / `(recover)` duration for the RFC TODO.
@@ -361,7 +361,7 @@ Expected:
 - no more than 3 recoveries in a row less than 5 s apart;
 - at least one `.bin` per wedge burst.
 
-- [ ] **Step 4: devcoredump disabled (last test of this boot)**
+- [x] **Step 4: devcoredump disabled (last test of this boot)**
 
 `echo 1 | sudo tee /sys/class/devcoredump/disabled`, then `sudo erhai-gpu-lab g1 --yes --runs 1 --hangcheck 0`.
 Expected: `recover=1`, the GPU active again, no hang. The dump check reports `dump=debugfs-only` (no `.bin`, debugfs still complete); judge it on `recover=1` and the GPU returning to active. Reboot afterwards (the knob is write-once).
@@ -377,10 +377,10 @@ Evidence (g1 run 5, 2026-11-01): `WARNING: mm/slub.c:6733 free_large_kmalloc` �
 - Modify: `drivers/gpu/drm/msm/msm_gpu.c` (`mutex_init` next to `INIT_WORK` in msm_gpu_init; lock across the render in `msm_gpu_devcoredump_read`, after `msm_gpu_crashstate_get()` and released before `msm_gpu_crashstate_put()` so it never nests with `gpu->lock`)
 - Modify (lab): `tablet/erhai-gpu-coredump` (free write: `{ echo 1 > "$dev/data"; } 2>/dev/null` so a vanished devcd doesn't print a bash redirect error)
 
-- [ ] **Step 1:** kernel commit `drm/msm: serialize devcoredump reads of the crash state`, inserted before the LAB ONLY commit; Signed-off-by nadelacruz-00 only, no AI trace. Fixes: tag looked up in Task 9.
-- [ ] **Step 2:** builds with DEV_COREDUMP=y and =n (`erhai-gpu-71-build`, `erhai-gpu-71-build-nocd`), no new warnings.
-- [ ] **Step 3:** lab copier fix + test (vanished devcd at free time → no stderr), full test suite passes; commit.
-- [ ] **Step 4:** regenerate `candidates/71-a8xx-crashstate` (5 patches), local build first (`tools/build-local.sh`), then the user reinstalls, reboots, reruns `sudo erhai-gpu-lab g1 --yes`.
+- [x] **Step 1:** kernel commit `drm/msm: serialize devcoredump reads of the crash state`, inserted before the LAB ONLY commit; Signed-off-by nadelacruz-00 only, no AI trace. Fixes: tag looked up in Task 9.
+- [x] **Step 2:** builds with DEV_COREDUMP=y and =n (`erhai-gpu-71-build`, `erhai-gpu-71-build-nocd`), no new warnings.
+- [x] **Step 3:** lab copier fix + test (vanished devcd at free time → no stderr), full test suite passes; commit.
+- [x] **Step 4:** regenerate `candidates/71-a8xx-crashstate` (5 patches), local build first (`tools/build-local.sh`), then the user reinstalls, reboots, reruns `sudo erhai-gpu-lab g1 --yes`.
 Expected: 6/6 PASS, and `journalctl -k -b | grep -c 'Not a kmalloc'` = 0.
 
 ---
