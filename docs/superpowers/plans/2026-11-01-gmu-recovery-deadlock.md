@@ -207,7 +207,7 @@ It runs the script with `subprocess.run(["bash", script, name], env=...)`. Tests
 - `test_non_gpu_devcd_is_untouched`: `failing_device` → a dir named `ath12k_pci`; rc 0; no `.bin`; `data` unchanged.
 - `test_missing_devcd_exits_quietly`: name `devcd9` that doesn't exist; rc 0; no `.bin`.
 - `test_same_second_names_do_not_collide`: two runs (devcd1, devcd2) with `date` fixed via `ERHAI_NOW=1793500000`; two distinct files, `01234567-1793500000.bin` and `01234567-1793500000-2.bin`.
-- `test_unit_is_udev_started_oneshot`: the `.service` file has `Type=oneshot` and `ExecStart=/usr/local/lib/erhai-gpu-lab/erhai-gpu-coredump %i`, and no `[Install]`. The `.rules` file matches `ACTION=="add"`, `SUBSYSTEM=="devcoredump"`, `KERNEL=="devcd[0-9]*"` and `ENV{SYSTEMD_WANTS}+="erhai-gpu-coredump@%k.service"`.
+- `test_unit_is_udev_started_oneshot`: the `.service` file has `Type=oneshot` and `ExecStart=/usr/local/lib/erhai-gpu-lab/erhai-gpu-coredump %i`, and no `[Install]`. The `.rules` file matches `ACTION=="add"`, `SUBSYSTEM=="devcoredump"`, `KERNEL=="devcd[0-9]*"`, `TAG+="systemd"` (required: systemd only tracks tagged devices) and `ENV{SYSTEMD_WANTS}+="erhai-gpu-coredump@%k.service"`.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -346,12 +346,14 @@ Expected: g0 has the same 2 config FAILs as 70-pr or fewer (`hung_task_timeout_s
 Expected:
 - 6/6 PASS;
 - every gpu-fault line has `dump=ok`;
-- `/var/lib/erhai-gpu/coredumps/` gains 5 `.bin` files (0600);
-- the journal has `erhai-lab: crashstate capture (...) took N us` lines (record the max N for the RFC TODO).
+- `/var/lib/erhai-gpu/coredumps/` gains at least 5 `.bin` files (0600) (a gpu-fault run can produce both a fault-path and a recover-path dump);
+- the journal has `erhai-lab: crashstate capture (...) took N us` lines (record the max N of the `(fault)` and `(recover)` lines separately for the RFC TODO).
 
 - [ ] **Step 3: Natural repro, 30 min**
 
 Bluetooth on, HDB 630, music. Afterwards, check the journal: for every `hangcheck recover!`, `power/runtime_status` returned to `active` and the completed fence advanced within 10 s.
+Scenario reached: the run counts only if at least one `hangcheck recover!` is followed within ~2 s by `*** gpu fault` and/or a `Timeout waiting for GMU OOB` / `timed out waiting for response` line, and that same recovery meets the 10 s check (runtime active + fence advancing). If no such event occurs the run is inconclusive: extend it, do not count it as a pass. Record the max `erhai-lab: crashstate capture (fault)` / `(recover)` duration for the RFC TODO.
+
 Expected:
 - no forced reset;
 - no `blocked for more than` (hung task) lines;

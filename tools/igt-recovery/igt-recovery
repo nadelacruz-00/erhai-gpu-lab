@@ -51,7 +51,8 @@ build() {
 
 # dump_check MARKER: did the udev copier save a complete GPU devcoredump after
 # MARKER, and does debugfs still produce one? Prints one line dump=<...>;
-# rc 0 only for dump=ok. Needs no root.
+# rc 0 only for dump=ok. The subcommand itself needs no root, but reading the
+# real debugfs gpu file does.
 dump_check() {
 	local marker=$1 dir=${ERHAI_COREDUMP_DIR:-/var/lib/erhai-gpu/coredumps}
 	local wait=${ERHAI_DUMP_WAIT_S:-30}
@@ -116,7 +117,9 @@ run() {
 		echo "PASS g1 $sub"
 		return 0
 	fi
-	echo "FAIL g1 $sub (want igt_rc=0 recover=1 cx_not_collapsed=0 hw_init_errors=0 dump=ok)"
+	want="igt_rc=0 recover=1 cx_not_collapsed=0 hw_init_errors=0"
+	[ "$sub" = gpu-fault ] && want="$want dump=ok"
+	echo "FAIL g1 $sub (want $want)"
 	return 1
 }
 

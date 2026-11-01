@@ -38,22 +38,26 @@ boot=${boot:0:8}
 umask 077
 tmp=$DIR/.$name.$$.tmp
 [[ -d $DIR ]] || mkdir -p -m 0700 "$DIR" 2>/dev/null
-if cp "$dev/data" "$tmp" 2>/dev/null; then
+if err=$(cat "$dev/data" 2>&1 > "$tmp"); then
 	final=$DIR/$boot-$NOW.bin
 	n=2
-	while [[ -e $final ]]; do
+	# ln fails if the name exists, so concurrent copiers never share a name.
+	saved=0
+	while :; do
+		if ln "$tmp" "$final" 2>/dev/null; then saved=1; break; fi
+		[[ -e $final ]] || break
 		final=$DIR/$boot-$NOW-$n.bin
 		n=$((n + 1))
 	done
-	if mv "$tmp" "$final" 2>/dev/null; then
+	rm -f "$tmp"
+	if ((saved)); then
 		log "saved $final"
 	else
-		log "copy failed: cannot move into $DIR"
-		rm -f "$tmp"
+		log "copy failed: cannot link into $DIR"
 		rc=1
 	fi
 else
-	log "copy failed: cannot copy $dev/data to $DIR"
+	log "copy failed: ${err:-cannot read $dev/data into $DIR}"
 	rm -f "$tmp"
 	rc=1
 fi

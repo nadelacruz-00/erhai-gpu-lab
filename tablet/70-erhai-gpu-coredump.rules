@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Install to /etc/udev/rules.d/. On every new devcoredump, start the copier;
 # it ignores dumps that did not come from the GPU.
-ACTION=="add", SUBSYSTEM=="devcoredump", KERNEL=="devcd[0-9]*", ENV{SYSTEMD_WANTS}+="erhai-gpu-coredump@%k.service"
+ACTION=="add", SUBSYSTEM=="devcoredump", KERNEL=="devcd[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="erhai-gpu-coredump@%k.service"

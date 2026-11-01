@@ -67,7 +67,8 @@ class AssertConfig(unittest.TestCase):
         frag = (CANDIDATES / "71-a8xx-crashstate" / "extra.config").read_text().splitlines()
         for sym in ("CONFIG_SM_GPUCC_8750=m", "CONFIG_FTRACE=y", "CONFIG_TRACING=y",
                     "CONFIG_TRACEPOINTS=y", "CONFIG_DETECT_HUNG_TASK=y",
-                    "CONFIG_DEFAULT_HUNG_TASK_TIMEOUT=120"):
+                    "CONFIG_DEFAULT_HUNG_TASK_TIMEOUT=120",
+                    "CONFIG_DEV_COREDUMP=y", "CONFIG_DRM_MSM_GPU_STATE=y"):
             with self.subTest(symbol=sym):
                 self.assertIn(sym, frag)
 

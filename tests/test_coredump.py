@@ -117,7 +117,7 @@ class Coredump(unittest.TestCase):
         self.assertNotIn("[Install]", unit)
         rules = RULES.read_text()
         for s in ['ACTION=="add"', 'SUBSYSTEM=="devcoredump"', 'KERNEL=="devcd[0-9]*"',
-                  'ENV{SYSTEMD_WANTS}+="erhai-gpu-coredump@%k.service"']:
+                  'TAG+="systemd"', 'ENV{SYSTEMD_WANTS}+="erhai-gpu-coredump@%k.service"']:
             self.assertIn(s, rules)
 
 
